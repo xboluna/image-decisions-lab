@@ -73,6 +73,11 @@ function inputsFor(dataset: Dataset, run: Run, inferences: Record<string, Infere
   return { inputs, byId };
 }
 
+/** One run's rows, scored the same way as the run being shown (same target, class groups, view and threshold). */
+export function scoreRun(dataset: Dataset, run: Run, inferences: Record<string, Inference>, target: Target, mapping: ClassMapping, view: View, threshold: number): Row[] {
+  return scoreRows(inputsFor(dataset, run, inferences, run.targetKey).inputs, target, mapping, view, threshold);
+}
+
 function analyse(role: Role, dataset: Dataset, picked: { run: Run; stale: boolean }, prompt: Prompt, inferences: Record<string, Inference>, mapping: ClassMapping, focus: string, threshold: number, target: Target): Analysis {
   const view = viewFor(target, focus);
   const { inputs, byId } = inputsFor(dataset, picked.run, inferences, prompt.targetKey);

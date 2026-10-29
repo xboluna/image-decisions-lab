@@ -88,7 +88,7 @@ test("histogram brush, confusion cell and outcome filters narrow the images", as
   // row "1", column "not 1": the false negatives
   await panel.locator('svg[data-chart="confusion_matrix"] g.cursor-pointer').nth(1).click();
   await expect(panel.getByText(/actual 1 → predicted not 1/)).toBeVisible();
-  await expect(panel.locator("text=✕ FN")).toHaveCount(await panel.locator("button:has(img)").count());
+  await expect(panel.locator("text=✕ FN")).toHaveCount(await panel.locator("[data-grid-scroll] button:has(img)").count());
   await panel.getByRole("button", { name: "Clear all" }).click();
 
   await panel.getByRole("button", { name: /^Filters/ }).click();
@@ -101,7 +101,7 @@ test("histogram brush, confusion cell and outcome filters narrow the images", as
 
 test("image detail shows the raw answer and can add a training image as an example", async ({ page }) => {
   await open(page);
-  await train(page).locator("button:has(img)").first().click();
+  await train(page).locator("[data-grid-scroll] button:has(img)").first().click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByText("Model answer")).toBeVisible();
   await dialog.getByRole("button", { name: /Show raw response/ }).click();
@@ -278,7 +278,7 @@ test("metric tiles explain themselves on hover and keyboard focus", async ({ pag
 
 test("test-set images cannot become reference examples", async ({ page }) => {
   await open(page);
-  await testPanel(page).locator("button:has(img)").first().click();
+  await testPanel(page).locator("[data-grid-scroll] button:has(img)").first().click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByText("Model answer")).toBeVisible();
   await expect(dialog.getByText("Use as a reference example")).toHaveCount(0);
@@ -386,4 +386,20 @@ test("large datasets page inside the scrolling grid", async ({ page }) => {
   const box = await panel.locator("[data-grid-scroll]").evaluate((el) => ({ scrolls: el.scrollHeight > el.clientHeight, h: el.clientHeight }));
   expect(box.scrolls).toBe(true);
   expect(box.h).toBeLessThanOrEqual(page.viewportSize()!.height * 0.7 + 1);
+});
+
+test("what changed lists images that flipped since the previous prompt version", async ({ page }) => {
+  await open(page);
+  const card = train(page).locator("[data-changes]");
+  await expect(card).toContainText("Balanced accuracy");
+  await expect(train(page).getByText(/vs previous version: 50 ml tubes v1/)).toBeVisible();
+  // the holdout has no regressions, so it opens on the fixes
+  await expect(testPanel(page).getByRole("radio", { name: /Fixed \d+/ })).toHaveAttribute("aria-checked", "true");
+  const broke = Number((await train(page).getByRole("radio", { name: /Broke \d+/ }).innerText()).match(/\d+/)![0]);
+  expect(broke).toBeGreaterThan(0);
+  await card.getByRole("button", { name: "Show in grid" }).click();
+  await expect(train(page).getByText(new RegExp(`broke since [0-9a-f]{8} \\(${broke}\\)`))).toBeVisible();
+  await expect(train(page).locator("[data-grid-scroll] button:has(img)")).toHaveCount(broke);
+  await card.locator("ul button").first().click();
+  await expect(page.getByRole("dialog").getByText(`1 of ${broke} broke`)).toBeVisible();
 });

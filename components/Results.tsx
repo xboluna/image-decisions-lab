@@ -6,11 +6,14 @@ import { ALL, groupsFor, type Metrics, type Target } from "@/lib/metrics";
 import { useStore } from "@/lib/store";
 import type { ClassMapping } from "@/lib/types";
 import { ChartCard, ConfusionChart, Histogram, LegendKey, PrChart } from "./charts";
+import { ChangesCard } from "./Changes";
 import { ClassGroups } from "./ClassGroups";
 import { classColor, classLabel } from "./colors";
 import { Button, cx, fmtPct, InfoTip, Popover } from "./ui";
 
 export type ChartFilters = {
+  /** A fixed set of images, e.g. the ones that changed outcome since the last version. */
+  ids: { label: string; ids: string[] } | null;
   span: [number, number] | null;
   cell: { actual: string; predicted: string } | null;
 };
@@ -164,7 +167,7 @@ export function ChartsRow({ a, role, threshold, focus, mapping, filters, setFilt
   const colors = binary ? [posColor, seriesColor.neg] : a.confusion.labels.map((g) => classColor(a.target, mapping, g));
 
   return (
-    <div className={cx("grid gap-2.5", wide ? "lg:grid-cols-[1.25fr_1fr_0.9fr]" : "lg:grid-cols-2 2xl:grid-cols-[1.25fr_1fr_0.9fr]")}>
+    <div className={cx("grid gap-2.5 lg:grid-cols-2", wide && "2xl:grid-cols-4")}>
       <ChartCard
         title="Confidence distribution"
         subtitle={canSet ? "Drag the line to move the threshold · drag across bars to filter" : "Drag across bars to filter images"}
@@ -204,7 +207,7 @@ export function ChartsRow({ a, role, threshold, focus, mapping, filters, setFilt
           }
         />
       </ChartCard>
-      <ChartCard className={cx(!wide && "lg:col-span-2 2xl:col-span-1")} title="Confusion matrix" subtitle="Rows: actual · columns: predicted · click a cell to filter">
+      <ChartCard title="Confusion matrix" subtitle="Rows: actual · columns: predicted · click a cell to filter">
         <ConfusionChart
           role={role}
           labels={a.confusion.labels.map((l) => (a.target.type === "boolean" ? l : classLabel(a.target, l)))}
@@ -215,6 +218,7 @@ export function ChartsRow({ a, role, threshold, focus, mapping, filters, setFilt
           onSelect={(cell) => setFilters({ cell })}
         />
       </ChartCard>
+      <ChangesCard a={a} mapping={mapping} threshold={threshold.value} setFilters={setFilters} />
     </div>
   );
 }

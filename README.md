@@ -39,14 +39,17 @@ npm run build      # what Vercel runs
    accuracy; drag it on the histogram to see every number and chart update. For the all-classes view the line is
    a review cutoff that flags low-confidence answers.
 5. **Score the test set.** It always uses the training threshold, never its own.
-6. **Inspect.** Filter images by any label, predicted class, outcome (TP/FP/FN/TN or right/wrong), score range
+6. **See what changed.** Next to the confusion matrix, each set lists the images that went from wrong to right
+   (fixed) or right to wrong (broke) since the previous prompt version or model, with the change in balanced
+   accuracy. Pick any earlier version to compare against, open an image, or show the group in the grid.
+7. **Inspect.** Filter images by any label, predicted class, outcome (TP/FP/FN/TN or right/wrong), score range
    (drag across the histogram) or confusion-matrix cell; colour borders by label, prediction or outcome. Open an
    image for its probabilities, raw response, cost and cache key, and add hard training cases to the prompt as
    examples (test-set images are never offered). Image grids scroll inside their panel and page through large
    datasets (40, 80 or 160 per page).
-7. **Class groups.** Merge or exclude classes to see whether a coarser label scores better. Scoring only:
+8. **Class groups.** Merge or exclude classes to see whether a coarser label scores better. Scoring only:
    probabilities are summed per group, so no new calls are made.
-8. **Export experiment.** One zip with the prompt (and exact request body), dataset manifests and hashes,
+9. **Export experiment.** One zip with the prompt (and exact request body), dataset manifests and hashes,
    per-image answers (JSONL and CSV), metrics, PR curves, confusion matrix, histogram, and the charts as SVG.
 
 Answers are cached per (prompt hash, model, image hash), so re-scoring is free until something that changes the
