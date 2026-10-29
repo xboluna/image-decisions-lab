@@ -6,7 +6,7 @@ const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "sw
 const mono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-mono-face", display: "swap" });
 
 export const metadata: Metadata = {
-  title: "Harness Studio",
+  title: "Image Decisions Lab",
   description: "Build, score and export image classification harnesses for decision models. Everything stays in your browser.",
   icons: { icon: "/icon.svg" },
 };

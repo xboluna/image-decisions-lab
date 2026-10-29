@@ -104,7 +104,7 @@ export function Header() {
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/icon.svg" alt="" className="size-7" />
           <div className="leading-tight">
-            <div className="text-[14.5px] font-semibold tracking-tight">Harness Studio</div>
+            <div className="text-[14.5px] font-semibold tracking-tight">Image Decisions Lab</div>
           </div>
         </div>
         <nav aria-label="Experiment" className="hidden min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-0.5 lg:flex scroll-thin">

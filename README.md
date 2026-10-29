@@ -1,9 +1,13 @@
-# Harness Studio
+# Image Decisions Lab
 
 Build, score and export image classification harnesses for decision models (OpenRouter's Decisions API).
 A harness is a prompt (system text, a question, and ordered reference images) that a decision model answers
-with class probabilities. Harness Studio scores a harness on a training set, fits a threshold, and checks it on
+with class probabilities. Image Decisions Lab scores a harness on a training set, fits a threshold, and checks it on
 a holdout test set, with every step hashed and exportable.
+
+![Import a dataset, score it, find the weak outputs, tune the prompt, re-score](docs/demo.gif)
+
+<sub>50-second walkthrough of the core loop, recorded on the live app ([MP4](docs/demo.mp4)). Re-record with `scripts/record-demo.mjs`.</sub>
 
 Everything runs in the browser: datasets, prompts, runs, cached answers and the API key live in IndexedDB and
 local storage. Model calls go straight from the browser to `openrouter.ai`. There is no server code.
