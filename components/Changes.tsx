@@ -1,43 +1,17 @@
 "use client";
 import { ArrowRight, Filter } from "lucide-react";
 import { useMemo, useState } from "react";
-import { scoreRun, type Analysis } from "@/lib/analysis";
+import type { Analysis } from "@/lib/analysis";
 import { compareRows, type Change, type ItemChange } from "@/lib/compare";
 import { shortHash } from "@/lib/hash";
-import { computeMetrics, type Row } from "@/lib/metrics";
-import { useStore } from "@/lib/store";
-import type { ClassMapping, Run } from "@/lib/types";
+import type { Row } from "@/lib/metrics";
+import type { ClassMapping } from "@/lib/types";
 import { ChartCard } from "./charts";
 import { classColor, classLabel } from "./colors";
 import { ItemDetail } from "./ItemDetail";
 import type { ChartFilters } from "./Results";
 import { StoredImage } from "./StoredImage";
-import { Button, cx, fmtPct, Segmented, timeAgo } from "./ui";
-
-/** Earlier runs on the same dataset version and label, one per prompt version and model, newest first. */
-function earlierRuns(runs: Run[], current: Run): Run[] {
-  const seen = new Set<string>();
-  const out: Run[] = [];
-  const candidates = runs
-    .filter((r) => r.id !== current.id && r.datasetHash === current.datasetHash && r.targetKey === current.targetKey && r.status !== "running" && Object.keys(r.results).length > 0)
-    .filter((r) => r.promptHash !== current.promptHash || r.model !== current.model)
-    .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
-  for (const r of candidates) {
-    const key = `${r.promptHash}|${r.model}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      out.push(r);
-    }
-  }
-  // The version scored just before this one comes first; versions scored after it follow.
-  const before = out.filter((r) => r.startedAt < current.startedAt);
-  return [...before, ...out.filter((r) => r.startedAt >= current.startedAt)];
-}
-
-function runLabel(r: Run, current: Run): string {
-  const model = r.model !== current.model ? ` · ${r.model.split("/").pop()}` : "";
-  return `${r.promptName} · ${shortHash(r.promptHash, 8)}${model}`;
-}
+import { Button, cx, fmtPct, Segmented } from "./ui";
 
 function Prediction({ row, a, mapping }: { row: Row; a: Analysis; mapping: ClassMapping }) {
   const label = a.view.mode === "binary" && a.target.type !== "boolean" ? (row.predPositive ? classLabel(a.target, a.view.positive) : `not ${a.view.positive}`) : classLabel(a.target, row.pred);
@@ -51,24 +25,16 @@ function Prediction({ row, a, mapping }: { row: Row; a: Analysis; mapping: Class
   );
 }
 
-export function ChangesCard({ a, mapping, threshold, setFilters }: { a: Analysis; mapping: ClassMapping; threshold: number; setFilters: (f: Partial<ChartFilters>) => void }) {
-  const runs = useStore((s) => s.runs);
-  const inferences = useStore((s) => s.inferences);
-  const options = useMemo(() => earlierRuns(runs, a.run), [runs, a.run]);
-  const [pickedId, setPickedId] = useState<string | null>(null);
+/** Image by image, what changed between the comparison version (see the comparison bar) and the one shown. */
+export function ChangesCard({ a, mapping, setFilters }: { a: Analysis; mapping: ClassMapping; setFilters: (f: Partial<ChartFilters>) => void }) {
   const [pickedTab, setTab] = useState<Change | null>(null);
   const [open, setOpen] = useState<string | null>(null);
-  const other = options.find((r) => r.id === pickedId) ?? options[0];
+  const b = a.baseline;
+  const cmp = useMemo(() => (b ? compareRows(b.rows, a.rows) : null), [b, a.rows]);
 
-  const result = useMemo(() => {
-    if (!other) return null;
-    const before = scoreRun(a.dataset, other, inferences, a.target, mapping, a.view, threshold);
-    return { cmp: compareRows(before, a.rows), baBefore: computeMetrics(before, a.target, mapping, a.view).balancedAccuracy };
-  }, [other, a, inferences, mapping, threshold]);
-
-  if (!other || !result) {
+  if (!b || !cmp) {
     return (
-      <ChartCard title="What changed" subtitle="Image by image, against the previous prompt version">
+      <ChartCard title="What changed" subtitle="Image by image, against the version compared against">
         <div className="flex h-full min-h-[200px] flex-col items-center justify-center px-6 text-center text-[12.5px] text-ink-2">
           <ArrowRight className="mb-2 size-4 text-muted" />
           Change the prompt or model and score this set again. Every image whose answer went from wrong to right, or right to wrong, shows up here.
@@ -77,41 +43,28 @@ export function ChangesCard({ a, mapping, threshold, setFilters }: { a: Analysis
     );
   }
 
-  const { cmp, baBefore } = result;
-  const baAfter = a.metrics.balancedAccuracy;
+  const other = b.run;
+  const baBefore = b.before.balancedAccuracy;
+  const baAfter = b.after.balancedAccuracy;
+  const paired = b.paired;
+  const scoredNow = b.scored;
+
   const delta = baBefore != null && baAfter != null ? baAfter - baBefore : null;
   // Regressions first, unless there are none.
   const tab: Change = pickedTab ?? (cmp.broke.length || !cmp.fixed.length ? "broke" : "fixed");
   const list = tab === "fixed" ? cmp.fixed : cmp.broke;
   const openIndex = open ? list.findIndex((c) => c.id === open) : -1;
   const item = (c: ItemChange) => a.dataset.items.find((i) => i.id === c.id);
-  const versionLabel = other.startedAt < a.run.startedAt ? "previous version" : "later version";
 
   return (
     <ChartCard
       title="What changed"
       subtitle={
-        options.length > 1 ? (
-          <label className="inline-flex max-w-full items-center gap-1">
-            vs
-            <select
-              aria-label="Compare with run"
-              value={other.id}
-              onChange={(e) => setPickedId(e.target.value)}
-              className="min-w-0 max-w-[220px] truncate rounded border border-line bg-surface px-1 text-[11.5px] text-ink-2 outline-none focus:border-accent"
-            >
-              {options.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {runLabel(r, a.run)} · {timeAgo(r.startedAt)}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : (
-          <span title={`Scored ${new Date(other.startedAt).toLocaleString()}`}>
-            vs {versionLabel}: {runLabel(other, a.run)}
-          </span>
-        )
+        <span title={`Scored ${new Date(other.startedAt).toLocaleString()}`}>
+          vs {other.promptName} · {shortHash(other.promptHash, 8)}
+          {other.model !== a.run.model ? ` · ${other.model.split("/").pop()}` : ""}
+          {b.complete ? "" : " · partial run"}
+        </span>
       }
     >
       <div className="flex h-full flex-col" data-changes>
@@ -123,6 +76,11 @@ export function ChangesCard({ a, mapping, threshold, setFilters }: { a: Analysis
           {delta != null && (
             <span className={cx("font-medium tabular", Math.abs(delta) < 0.0005 ? "text-muted" : delta > 0 ? "text-good-ink" : "text-critical-ink")}>
               {delta > 0 ? "▲" : delta < 0 ? "▼" : ""} {Math.abs(delta * 100).toFixed(1)} pts
+            </span>
+          )}
+          {paired < scoredNow && (
+            <span className="text-warning-ink" title="Balanced accuracy for both versions is computed on the images scored in both runs, so the change reflects only the prompt or model.">
+              on the {paired} of {scoredNow} images scored in both
             </span>
           )}
         </div>

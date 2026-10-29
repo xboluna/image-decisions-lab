@@ -31,3 +31,50 @@ describe("compareRows", () => {
     expect(c.notComparable).toBe(1);
   });
 });
+
+import { computeMetrics } from "@/lib/metrics";
+import { pairedRows, pickBaselines } from "@/lib/compare";
+
+describe("pickBaselines", () => {
+  const run = (id: string, promptHash: string, startedAt: string, complete = true) => ({ id, promptHash, model: "m", startedAt, complete });
+  const current = run("now", "B", "2026-10-29T12:00");
+  it("prefers the newest complete run of a version over a newer partial one", () => {
+    const full = run("full", "A", "2026-10-29T10:00");
+    const cancelled = run("cancelled", "A", "2026-10-29T11:00", false);
+    const picks = pickBaselines([full, cancelled, current], current, (r) => r.complete);
+    expect(picks).toEqual([{ run: full, complete: true }]);
+  });
+  it("falls back to a partial run, flagged, when a version has no complete run", () => {
+    const partial = run("partial", "A", "2026-10-29T11:00", false);
+    expect(pickBaselines([partial, current], current, (r) => r.complete)).toEqual([{ run: partial, complete: false }]);
+  });
+  it("offers each other version once, the one scored just before first, never the current version", () => {
+    const older = run("older", "A", "2026-10-29T09:00");
+    const prev = run("prev", "C", "2026-10-29T11:00");
+    const sameVersion = run("same", "B", "2026-10-29T08:00");
+    const later = run("later", "D", "2026-10-29T13:00");
+    expect(pickBaselines([older, prev, sameVersion, later, current], current, () => true).map((p) => p.run.id)).toEqual(["prev", "older", "later"]);
+  });
+});
+
+describe("pairedRows", () => {
+  it("computes both sides' balanced accuracy on the same images", () => {
+    // The baseline only finished the images it got right; unpaired, it would look perfect.
+    const before = scoreRows(
+      [
+        { id: "two_a", gt: "2", probabilities: { "1": 0.1, "2": 0.9 } },
+        { id: "one_a", gt: "1", probabilities: null },
+        { id: "one_b", gt: "1", probabilities: null },
+      ],
+      cat,
+      {},
+      view,
+      0,
+    );
+    const after = run({ two_a: 0.9, one_a: 0.8, one_b: 0.2 });
+    const p = pairedRows(before, after);
+    expect(p.before.map((r) => r.id)).toEqual(["two_a"]);
+    expect(p.after.map((r) => r.id)).toEqual(["two_a"]);
+    expect(computeMetrics(p.after, cat, {}, view).balancedAccuracy).toBe(computeMetrics(p.before, cat, {}, view).balancedAccuracy);
+  });
+});

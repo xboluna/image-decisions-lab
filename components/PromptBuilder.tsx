@@ -2,7 +2,7 @@
 import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { AlertTriangle, Check, ChevronDown, Copy, Download, FileText, GripVertical, ImagePlus, Images, Plus, Trash2, Upload, X } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, Copy, Download, Eye, FileText, GripVertical, ImagePlus, Images, Plus, Trash2, Undo2, Upload, X } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { db } from "@/lib/db";
 import { exportPrompt } from "@/lib/export";
@@ -291,8 +291,13 @@ function PickerTile({ hash, name, label, color, boolean, used, onAdd }: { hash: 
 }
 
 export function PromptBuilder() {
-  const prompt = useStore((s) => s.prompts.find((p) => p.id === s.selection.prompt));
-  const hash = useStore((s) => (prompt ? s.promptHashes[prompt.id] : undefined));
+  const selected = useStore((s) => s.prompts.find((p) => p.id === s.selection.prompt));
+  const selectedHash = useStore((s) => (selected ? s.promptHashes[selected.id] : undefined));
+  const peek = useStore((s) => s.peek);
+  const endPeek = useStore((s) => s.endPeek);
+  // While peeking, the builder shows the earlier version, read-only.
+  const prompt = peek?.prompt ?? selected;
+  const hash = peek?.hash ?? selectedHash;
   const train = useStore((s) => s.datasets.find((d) => d.id === s.selection.train));
   const model = useStore((s) => s.settings.model);
   const updatePrompt = useStore((s) => s.updatePrompt);
@@ -305,6 +310,7 @@ export function PromptBuilder() {
   const [dropping, setDropping] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
+  const noSensors = useSensors();
   const schema = train?.schema.find((s) => s.key === prompt?.targetKey);
   const problems = useMemo(() => (prompt ? promptProblems(prompt, train?.schema) : []), [prompt, train]);
   const maxImages = modelInfo(model)?.maxImages;
@@ -326,7 +332,7 @@ export function PromptBuilder() {
   }
 
   const onDragEnd = (e: DragEndEvent) => {
-    if (!e.over || e.active.id === e.over.id) return;
+    if (peek || !e.over || e.active.id === e.over.id) return;
     const from = prompt.examples.findIndex((x) => x.id === e.active.id);
     const to = prompt.examples.findIndex((x) => x.id === e.over!.id);
     if (from >= 0 && to >= 0) moveExample(from, to);
@@ -357,14 +363,25 @@ export function PromptBuilder() {
         <div className="min-w-0 flex-1">
           <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">Prompt builder</div>
           <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-2">
-            <PromptPicker prompt={prompt} />
+            {peek ? <span className="truncate text-[17px] font-semibold tracking-tight">{prompt.name}</span> : <PromptPicker prompt={prompt} />}
             <HashChip hash={hash} prefix="prompt" title="Prompt version (sha256 over everything sent to the model)" />
           </div>
         </div>
-
       </div>
 
-      <div className="mt-3 space-y-3.5">
+      {peek && (
+        <div className="mt-3 flex items-center gap-2 rounded-xl border border-warning/60 bg-warning-wash px-3 py-2 text-[12.5px] text-warning-ink" data-peek-banner>
+          <Eye className="size-4 shrink-0" />
+          <span className="min-w-0 flex-1">
+            Viewing an earlier version, read-only{peek.model !== model ? ` (scored with ${peek.model.split("/").pop()})` : ""}. Your working prompt is unchanged.
+          </span>
+          <Button size="sm" variant="primary" icon={<Undo2 className="size-3.5" />} onClick={endPeek}>
+            Switch back
+          </Button>
+        </div>
+      )}
+
+      <fieldset disabled={!!peek} className={cx("m-0 mt-3 min-w-0 space-y-3.5 border-0 p-0", peek && "opacity-90")}>
         <Field label="Name" hint="Not part of the hash">
           <input value={prompt.name} onChange={(e) => updatePrompt(prompt.id, { name: e.target.value })} className={inputClass} aria-label="Prompt name" />
         </Field>
@@ -446,7 +463,7 @@ export function PromptBuilder() {
             </Badge>
           </div>
           {prompt.examples.length > 0 ? (
-            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+            <DndContext sensors={peek ? noSensors : sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
               <SortableContext items={prompt.examples.map((e) => e.id)} strategy={verticalListSortingStrategy}>
                 <ol className="space-y-1.5">
                   {prompt.examples.map((e, i) => (
@@ -499,7 +516,7 @@ export function PromptBuilder() {
             </ul>
           </div>
         )}
-      </div>
+      </fieldset>
       <ExamplePicker open={pickerOpen} onClose={() => setPickerOpen(false)} dataset={train} prompt={prompt} />
     </Card>
   );

@@ -95,6 +95,8 @@ export type Run = {
   status: RunStatus;
   /** Item id -> inference cache key. */
   results: Record<string, string>;
+  /** The exact prompt that was scored, so any earlier version can be viewed again. Missing on older runs. */
+  promptSnapshot?: Prompt;
   cachedCount: number;
   errorCount: number;
   costUsd: number;

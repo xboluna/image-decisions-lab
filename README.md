@@ -41,9 +41,11 @@ npm run build      # what Vercel runs
    accuracy; drag it on the histogram to see every number and chart update. For the all-classes view the line is
    a review cutoff that flags low-confidence answers.
 5. **Score the test set.** It always uses the training threshold, never its own.
-6. **See what changed.** Next to the confusion matrix, each set lists the images that went from wrong to right
-   (fixed) or right to wrong (broke) since the previous prompt version or model, with the change in balanced
-   accuracy. Pick any earlier version to compare against, open an image, or show the group in the grid.
+6. **Compare versions.** A bar above each set's metrics names the version every comparison is made against:
+   by default the prompt version (and model) scored just before this one, or any earlier one you pick. The metric
+   deltas and the "What changed" card (images that went wrong → right or right → wrong) all use it. Both versions
+   are measured on the images scored in both, and a complete run of a version is preferred over a newer partial
+   one. "See this prompt" shows that version's prompt and results, read-only, until you switch back.
 7. **Inspect.** Filter images by any label, predicted class, outcome (TP/FP/FN/TN or right/wrong), score range
    (drag across the histogram) or confusion-matrix cell; colour borders by label, prediction or outcome. Open an
    image for its probabilities, raw response, cost and cache key, and add hard training cases to the prompt as

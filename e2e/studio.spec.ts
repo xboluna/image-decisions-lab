@@ -388,11 +388,44 @@ test("large datasets page inside the scrolling grid", async ({ page }) => {
   expect(box.h).toBeLessThanOrEqual(page.viewportSize()!.height * 0.7 + 1);
 });
 
+/** Edits the stored runs in the page's IndexedDB (keys are stored separately from the records). */
+async function editRuns(page: Page, edit: "plantPartial" | "dropCompleteV1") {
+  await page.evaluate(
+    (edit) =>
+      new Promise<void>((resolve, reject) => {
+        const open = indexedDB.open("harness-studio-runs");
+        open.onerror = () => reject(open.error);
+        open.onsuccess = () => {
+          const tx = open.result.transaction("runs", "readwrite");
+          tx.oncomplete = () => resolve();
+          tx.onerror = tx.onabort = () => reject(tx.error);
+          const store = tx.objectStore("runs");
+          const all = store.getAll();
+          all.onsuccess = () => {
+            type R = { id: string; role: string; promptId: string; startedAt: string; status: string; results: Record<string, string> };
+            const runs = all.result as R[];
+            const v1 = runs.filter((r) => r.promptId === "pr_demo_50ml_v1" && r.role === "train");
+            if (edit === "plantPartial") {
+              // A cancelled re-run of v1, newer than its complete run, that finished only 13 images.
+              const base = v1[0];
+              const half = Object.fromEntries(Object.entries(base.results).slice(0, 13));
+              const run = { ...base, id: "run_partial", status: "cancelled", startedAt: new Date(Date.parse(base.startedAt) + 1000).toISOString(), results: half };
+              store.put(run, run.id);
+            } else {
+              for (const r of v1) if (r.id !== "run_partial") store.delete(r.id);
+            }
+          };
+        };
+      }),
+    edit,
+  );
+}
+
 test("what changed lists images that flipped since the previous prompt version", async ({ page }) => {
   await open(page);
   const card = train(page).locator("[data-changes]");
   await expect(card).toContainText("Balanced accuracy");
-  await expect(train(page).getByText(/vs previous version: 50 ml tubes v1/)).toBeVisible();
+  await expect(train(page).getByText(/^vs 50 ml tubes v1 · [0-9a-f]{8}$/)).toBeVisible();
   // the holdout has no regressions, so it opens on the fixes
   await expect(testPanel(page).getByRole("radio", { name: /Fixed \d+/ })).toHaveAttribute("aria-checked", "true");
   const broke = Number((await train(page).getByRole("radio", { name: /Broke \d+/ }).innerText()).match(/\d+/)![0]);
@@ -402,4 +435,51 @@ test("what changed lists images that flipped since the previous prompt version",
   await expect(train(page).locator("[data-grid-scroll] button:has(img)")).toHaveCount(broke);
   await card.locator("ul button").first().click();
   await expect(page.getByRole("dialog").getByText(`1 of ${broke} broke`)).toBeVisible();
+});
+
+test("what changed ignores a newer partial run and compares on the same images", async ({ page }) => {
+  await open(page);
+  const bar = train(page).locator("[data-comparison]");
+  const card = train(page).locator("[data-changes]");
+  const headline = () => card.locator("div").first().innerText();
+  const before = await headline();
+
+  await editRuns(page, "plantPartial");
+  await page.reload();
+  await expect(card).toContainText("Balanced accuracy");
+  expect(await headline()).toBe(before);
+  await expect(bar).not.toContainText("partial run");
+  await expect(bar).not.toContainText("scored in both");
+
+  // With the complete run gone, the partial one is offered, labelled, and compared on the shared images only.
+  await editRuns(page, "dropCompleteV1");
+  await page.reload();
+  await expect(train(page).getByText(/^vs 50 ml tubes v1 · [0-9a-f]{8} · partial run$/)).toBeVisible();
+  await expect(card).toContainText("on the 13 of 27 images scored in both");
+  await expect(bar).toContainText("Deltas use the 13 of 27 images scored in both versions.");
+});
+
+test("the comparison bar names the baseline, and peeking shows that version until switching back", async ({ page }) => {
+  await open(page);
+  const bar = train(page).locator("[data-comparison]");
+  await expect(bar).toContainText("Comparing against");
+  await expect(bar.getByRole("combobox", { name: "Version to compare against" })).toContainText(/50 ml tubes v1 · [0-9a-f]{8}/);
+  const workingBa = await train(page).locator("text=Balanced accuracy").first().locator("..").locator("..").innerText();
+  await expect(train(page).locator("text=Balanced accuracy").first().locator("..").locator("..")).toContainText("▲");
+
+  await bar.getByRole("button", { name: "See this prompt" }).click();
+  await expect(bar).toContainText("Viewing");
+  await expect(bar).toContainText("compared against your working version");
+  await expect(page.locator("[data-peek-banner]")).toContainText("read-only");
+  await expect(page.getByLabel("Question")).toHaveValue("How many 50 ml tubes are in the photo?");
+  await expect(page.getByLabel("Question")).toBeDisabled();
+  await expect(train(page).getByRole("button", { name: "Score training set" })).toBeDisabled();
+  await expect(train(page).locator("text=Balanced accuracy").first().locator("..").locator("..")).toContainText("▼");
+  await expect(page.locator("nav[aria-label=Experiment] > div").nth(1)).toContainText("51755a05");
+
+  await page.locator("[data-peek-banner]").getByRole("button", { name: "Switch back" }).click();
+  await expect(bar).toContainText("Comparing against");
+  await expect(page.getByLabel("Question")).toBeEnabled();
+  await expect(page.getByLabel("Question")).toHaveValue(/Count each wide tube/);
+  expect(await train(page).locator("text=Balanced accuracy").first().locator("..").locator("..").innerText()).toBe(workingBa);
 });

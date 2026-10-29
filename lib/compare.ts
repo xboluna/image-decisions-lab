@@ -48,3 +48,39 @@ export function compareRows(before: Row[], after: Row[]): RunComparison {
   out.broke.sort((x, y) => swing(y) - swing(x));
   return out;
 }
+
+export type Baseline<R> = { run: R; complete: boolean };
+
+/**
+ * Earlier runs to compare against, one per prompt version and model. Each is the newest complete run of that
+ * version (finished, every image answered); a partial run (cancelled, failed, interrupted by a reload, or with
+ * failed answers) is offered only when that version has no complete run. Runs scored before the current one come
+ * first, newest first.
+ */
+export function pickBaselines<R extends { id: string; promptHash: string; model: string; startedAt: string }>(
+  candidates: R[],
+  current: R,
+  isComplete: (r: R) => boolean,
+): Baseline<R>[] {
+  const byVersion = new Map<string, R[]>();
+  for (const r of candidates) {
+    if (r.id === current.id || (r.promptHash === current.promptHash && r.model === current.model)) continue;
+    const key = `${r.promptHash}|${r.model}`;
+    byVersion.set(key, [...(byVersion.get(key) ?? []), r]);
+  }
+  const picks: Baseline<R>[] = [];
+  for (const runs of byVersion.values()) {
+    const newestFirst = [...runs].sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+    const complete = newestFirst.find(isComplete);
+    picks.push(complete ? { run: complete, complete: true } : { run: newestFirst[0], complete: false });
+  }
+  picks.sort((a, b) => b.run.startedAt.localeCompare(a.run.startedAt));
+  return [...picks.filter((p) => p.run.startedAt < current.startedAt), ...picks.filter((p) => p.run.startedAt >= current.startedAt)];
+}
+
+/** Both runs restricted to the images scored in both, so their metrics are computed on the same images. */
+export function pairedRows(before: Row[], after: Row[]): { before: Row[]; after: Row[] } {
+  const scoredBefore = new Set(before.filter((r) => r.status === "scored").map((r) => r.id));
+  const shared = new Set(after.filter((r) => r.status === "scored" && scoredBefore.has(r.id)).map((r) => r.id));
+  return { before: before.filter((r) => shared.has(r.id)), after: after.filter((r) => shared.has(r.id)) };
+}

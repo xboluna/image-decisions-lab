@@ -76,8 +76,9 @@ export function Header() {
   const exp = useExperiment();
   const datasets = useStore((s) => s.datasets);
   const selection = useStore((s) => s.selection);
-  const model = useStore((s) => s.settings.model);
-  const hash = useStore((s) => (exp.prompt ? s.promptHashes[exp.prompt.id] : undefined));
+  // The version being viewed: the working prompt, or an earlier one while peeking.
+  const model = exp.model;
+  const hash = exp.promptHash;
   const train = datasets.find((d) => d.id === selection.train);
   const test = datasets.find((d) => d.id === selection.test);
   const [theme, setTheme] = useTheme();
