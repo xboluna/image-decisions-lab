@@ -1,0 +1,16 @@
+{
+  "name": "50 ml tubes · train",
+  "description": "Cluttered labware on a bench, 6 scenes. 50 ml tube counts hand-labelled on LabWare_Items photos (MIT); frames where a tube is cut off or mostly hidden were left out.",
+  "schema": [
+    {
+      "key": "fifty_ml_tubes",
+      "type": "categorical",
+      "classes": [
+        "0",
+        "1",
+        "2"
+      ],
+      "description": "Number of 50 ml conical tubes in view (15 ml tubes, 1.5 ml tubes and pipette tips do not count)."
+    }
+  ]
+}

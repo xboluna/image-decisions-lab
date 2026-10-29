@@ -1,0 +1,246 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+:root {
+  color-scheme: light;
+  --page: #f5f5f2;
+  --surface: #ffffff;
+  --surface-2: #f9f9f7;
+  --surface-3: #f0efec;
+  --border: rgba(11, 11, 11, 0.09);
+  --border-strong: rgba(11, 11, 11, 0.16);
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #898781;
+  --grid: #e8e7e1;
+  --axis: #c3c2b7;
+  --accent: #2a78d6;
+  --accent-ink: #1c5cab;
+  --accent-wash: #e8f1fc;
+  --focus: rgba(42, 120, 214, 0.35);
+  --good: #0ca30c;
+  --good-ink: #006300;
+  --good-wash: #e7f6e7;
+  --warning: #fab219;
+  --warning-ink: #8a5a00;
+  --warning-wash: #fff6e0;
+  --serious: #ec835a;
+  --serious-ink: #a4441c;
+  --serious-wash: #fdeee7;
+  --critical: #d03b3b;
+  --critical-ink: #a82727;
+  --critical-wash: #fbeaea;
+  --s1: #2a78d6;
+  --s2: #eb6834;
+  --s3: #1baf7a;
+  --s4: #eda100;
+  --s5: #e87ba4;
+  --s6: #008300;
+  --s7: #4a3aa7;
+  --s8: #e34948;
+  /* Class colours: no greens, reds or oranges, which mean right/wrong. The first three separate as all pairs under
+     colour-blind simulation (validated); a fourth always appears beside its class name. */
+  --class-1: #2a78d6;
+  --class-2: #eda100;
+  --class-3: #e87ba4;
+  --class-4: #4a3aa7;
+  --shadow: 0 1px 2px rgba(11, 11, 11, 0.04), 0 1px 1px rgba(11, 11, 11, 0.03);
+  --shadow-lg: 0 12px 40px rgba(11, 11, 11, 0.14), 0 2px 6px rgba(11, 11, 11, 0.06);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #171716;
+    --surface-2: #1d1d1c;
+    --surface-3: #262624;
+    --border: rgba(255, 255, 255, 0.09);
+    --border-strong: rgba(255, 255, 255, 0.16);
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --muted: #8f8d86;
+    --grid: #2c2c2a;
+    --axis: #45443f;
+    --accent: #3987e5;
+    --accent-ink: #86b6ef;
+    --accent-wash: rgba(57, 135, 229, 0.14);
+    --focus: rgba(57, 135, 229, 0.45);
+    --good-ink: #4cc94c;
+    --good-wash: rgba(12, 163, 12, 0.14);
+    --warning-ink: #fbc75a;
+    --warning-wash: rgba(250, 178, 25, 0.12);
+    --serious-ink: #f2a281;
+    --serious-wash: rgba(236, 131, 90, 0.14);
+    --critical-ink: #ec7b7b;
+    --critical-wash: rgba(208, 59, 59, 0.16);
+    --s1: #3987e5;
+    --s2: #d95926;
+    --s3: #199e70;
+    --s4: #c98500;
+    --s5: #d55181;
+    --s6: #008300;
+    --s7: #9085e9;
+    --s8: #e66767;
+    --class-1: #3987e5;
+    --class-2: #c98500;
+    --class-3: #d55181;
+    --class-4: #9085e9;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.55);
+  }
+}
+
+/* The theme menu's explicit Dark choice, independent of the OS setting. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d;
+  --surface: #171716;
+  --surface-2: #1d1d1c;
+  --surface-3: #262624;
+  --border: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --ink: #ffffff;
+  --ink-2: #c3c2b7;
+  --muted: #8f8d86;
+  --grid: #2c2c2a;
+  --axis: #45443f;
+  --accent: #3987e5;
+  --accent-ink: #86b6ef;
+  --accent-wash: rgba(57, 135, 229, 0.14);
+  --focus: rgba(57, 135, 229, 0.45);
+  --good-ink: #4cc94c;
+  --good-wash: rgba(12, 163, 12, 0.14);
+  --warning-ink: #fbc75a;
+  --warning-wash: rgba(250, 178, 25, 0.12);
+  --serious-ink: #f2a281;
+  --serious-wash: rgba(236, 131, 90, 0.14);
+  --critical-ink: #ec7b7b;
+  --critical-wash: rgba(208, 59, 59, 0.16);
+  --s1: #3987e5;
+  --s2: #d95926;
+  --s3: #199e70;
+  --s4: #c98500;
+  --s5: #d55181;
+  --s6: #008300;
+  --s7: #9085e9;
+  --s8: #e66767;
+  --class-1: #3987e5;
+  --class-2: #c98500;
+  --class-3: #d55181;
+  --class-4: #9085e9;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.55);
+}
+
+
+@theme inline {
+  --color-page: var(--page);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-wash: var(--accent-wash);
+  --color-good: var(--good);
+  --color-good-ink: var(--good-ink);
+  --color-good-wash: var(--good-wash);
+  --color-warning: var(--warning);
+  --color-warning-ink: var(--warning-ink);
+  --color-warning-wash: var(--warning-wash);
+  --color-serious: var(--serious);
+  --color-serious-ink: var(--serious-ink);
+  --color-serious-wash: var(--serious-wash);
+  --color-critical: var(--critical);
+  --color-critical-ink: var(--critical-ink);
+  --color-critical-wash: var(--critical-wash);
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: var(--font-mono-face), ui-monospace, "SF Mono", Menlo, monospace;
+  --shadow-card: var(--shadow);
+  --shadow-pop: var(--shadow-lg);
+}
+
+html,
+body {
+  background: var(--page);
+  color: var(--ink);
+}
+
+body {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "cv11", "ss01";
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+::selection {
+  background: var(--accent-wash);
+}
+
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--axis) transparent;
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.animate-pop {
+  animation: pop-in 160ms ease-out;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200px 0;
+  }
+  100% {
+    background-position: calc(200px + 100%) 0;
+  }
+}
+.shimmer {
+  background: linear-gradient(90deg, var(--surface-3) 0, var(--surface-2) 50%, var(--surface-3) 100%);
+  background-size: 200px 100%;
+  animation: shimmer 1.2s infinite linear;
+}
+
+@media (forced-colors: active) {
+  .chart-mark {
+    forced-color-adjust: none;
+  }
+}
+
+@keyframes value-flash {
+  0% {
+    background-color: var(--accent);
+    color: #fff;
+    box-shadow: 0 0 0 3px var(--focus);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+.value-flash {
+  animation: value-flash 900ms ease-out;
+}

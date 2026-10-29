@@ -1,0 +1,16 @@
+{
+  "name": "50 ml tubes · holdout",
+  "description": "4 different scenes, never used for prompt tuning or threshold fitting.",
+  "schema": [
+    {
+      "key": "fifty_ml_tubes",
+      "type": "categorical",
+      "classes": [
+        "0",
+        "1",
+        "2"
+      ],
+      "description": "Number of 50 ml conical tubes in view (15 ml tubes, 1.5 ml tubes and pipette tips do not count)."
+    }
+  ]
+}
