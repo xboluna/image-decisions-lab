@@ -483,3 +483,50 @@ test("the comparison bar names the baseline, and peeking shows that version unti
   await expect(page.getByLabel("Question")).toHaveValue(/Count each wide tube/);
   expect(await train(page).locator("text=Balanced accuracy").first().locator("..").locator("..").innerText()).toBe(workingBa);
 });
+
+test("peeking shows the same complete run the comparison uses, even after a cancelled re-run", async ({ page }) => {
+  await open(page);
+  await editRuns(page, "plantPartial");
+  await page.reload();
+  const card = train(page).locator("[data-changes]");
+  await expect(card).toContainText("Balanced accuracy");
+  const baselineBa = (await card.innerText()).match(/Balanced accuracy\s+([\d.]+%)/)![1];
+  await train(page).locator("[data-comparison]").getByRole("button", { name: "See this prompt" }).click();
+  const tiles = train(page).locator("text=Balanced accuracy").first().locator("..").locator("..");
+  await expect(tiles).toContainText(baselineBa);
+  await expect(tiles).toContainText("27 scored");
+  await expect(train(page).locator("[data-comparison]")).not.toContainText("scored in both");
+});
+
+test("nothing edits the working prompt while an earlier version is on screen", async ({ page }) => {
+  await open(page);
+  const promptStep = page.locator("nav[aria-label=Experiment] > div").nth(1);
+  const workingHash = (await promptStep.innerText()).match(/[0-9a-f]{8}/)![0];
+  const examples = page.locator('[data-panel="prompt"] ol > li');
+  await train(page).locator("[data-comparison]").getByRole("button", { name: "See this prompt" }).click();
+  await expect(page.locator("[data-peek-banner]")).toBeVisible();
+
+  // dropping an image onto the reference examples does nothing
+  const zone = page.locator('[data-panel="prompt"]').getByText("Reference examples").locator("..").locator("..");
+  const bytes = readFileSync(path.join(process.cwd(), "public/demo/train/images/scene0_frame112.jpg")).toString("base64");
+  const dt = await page.evaluateHandle((b64) => {
+    const data = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    const t = new DataTransfer();
+    t.items.add(new File([data], "dropped.jpg", { type: "image/jpeg" }));
+    return t;
+  }, bytes);
+  await zone.dispatchEvent("dragover", { dataTransfer: dt });
+  await zone.dispatchEvent("drop", { dataTransfer: dt });
+  await page.waitForTimeout(500);
+  await expect(examples).toHaveCount(0);
+
+  // the image viewer does not offer to add examples
+  await train(page).locator("[data-grid-scroll] button:has(img)").first().click();
+  await expect(page.getByRole("dialog").getByText("Model answer")).toBeVisible();
+  await expect(page.getByRole("dialog").getByRole("button", { name: /Add to prompt/ })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+
+  await page.locator("[data-peek-banner]").getByRole("button", { name: "Switch back" }).click();
+  await expect(promptStep).toContainText(workingHash);
+  await expect(examples).toHaveCount(3);
+});

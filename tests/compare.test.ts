@@ -78,3 +78,18 @@ describe("pairedRows", () => {
     expect(computeMetrics(p.after, cat, {}, view).balancedAccuracy).toBe(computeMetrics(p.before, cat, {}, view).balancedAccuracy);
   });
 });
+
+import { preferredRun } from "@/lib/compare";
+
+describe("preferredRun", () => {
+  const r = (id: string, status: string, startedAt: string, complete: boolean) => ({ id, status, startedAt, complete });
+  it("shows a run that is still scoring", () => {
+    expect(preferredRun([r("done", "done", "1", true), r("live", "running", "2", false)], (x) => x.complete)?.id).toBe("live");
+  });
+  it("prefers an older complete run over a newer cancelled one", () => {
+    expect(preferredRun([r("done", "done", "1", true), r("cancelled", "cancelled", "2", false)], (x) => x.complete)?.id).toBe("done");
+  });
+  it("falls back to the newest partial run", () => {
+    expect(preferredRun([r("a", "failed", "1", false), r("b", "cancelled", "2", false)], (x) => x.complete)?.id).toBe("b");
+  });
+});

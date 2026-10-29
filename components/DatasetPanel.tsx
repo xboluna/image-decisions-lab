@@ -146,7 +146,7 @@ function RunHistory({ dataset, role }: { dataset: Dataset; role: Role }) {
       });
       let threshold = view.mode === "binary" ? 0.5 : 0;
       if (view.mode === "binary") {
-        const trainRun = role === "train" ? r : pickRun(runs.filter((x) => x.role === "train" && x.promptHash === r.promptHash && x.model === r.model), trainDs, { targetKey: r.targetKey }, r.promptHash, r.model)?.run;
+        const trainRun = role === "train" ? r : pickRun(runs.filter((x) => x.role === "train" && x.promptHash === r.promptHash && x.model === r.model), trainDs, { targetKey: r.targetKey }, r.promptHash, r.model, inferences)?.run;
         if (trainRun && trainDs) {
           const trainInputs = trainDs.items.map((i) => {
             const inf = inferences[trainRun.results[i.id]];

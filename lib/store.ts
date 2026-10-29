@@ -98,6 +98,11 @@ export const useStore = create<State>((set, get) => {
   };
 
   const patchPrompt = (id: string, fn: (p: Prompt) => Prompt) => {
+    // An earlier version is on screen: it is read-only, and the hidden working prompt must not change either.
+    if (get().peek) {
+      get().notify("You are viewing an earlier version. Switch back to edit your working prompt.", "error");
+      return;
+    }
     let updated: Prompt | undefined;
     set((s) => ({
       prompts: s.prompts.map((p) => {

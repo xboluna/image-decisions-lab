@@ -339,6 +339,7 @@ export function PromptBuilder() {
   };
 
   async function addFiles(files: File[]) {
+    if (peek) return;
     for (const file of files.filter((f) => f.type.startsWith("image/"))) {
       const bytes = new Uint8Array(await file.arrayBuffer());
       const imageHash = await sha256Bytes(bytes);
@@ -440,14 +441,14 @@ export function PromptBuilder() {
 
         <div
           onDragOver={(e) => {
-            if (e.dataTransfer.types.includes("Files")) {
+            if (!peek && e.dataTransfer.types.includes("Files")) {
               e.preventDefault();
               setDropping(true);
             }
           }}
           onDragLeave={() => setDropping(false)}
           onDrop={(e) => {
-            if (!e.dataTransfer.files.length) return;
+            if (peek || !e.dataTransfer.files.length) return;
             e.preventDefault();
             setDropping(false);
             void addFiles(Array.from(e.dataTransfer.files));

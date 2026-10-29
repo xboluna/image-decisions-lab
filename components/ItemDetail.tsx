@@ -43,7 +43,8 @@ export function ItemDetail({ item, dataset, analysis, target, targetKey, mapping
   const alreadyExample = prompt?.examples.some((e) => e.imageHash === item.imageHash);
   // Test-set images are the holdout: they can never become reference examples.
   const isTestSet = useStore((s) => s.selection.test === dataset.id);
-  const canAdd = !isTestSet && prompt && targetKey === prompt.targetKey && gtRaw != null;
+  const peeking = useStore((s) => !!s.peek);
+  const canAdd = !isTestSet && !peeking && prompt && targetKey === prompt.targetKey && gtRaw != null;
   const add = () => {
     if (!prompt || gtRaw == null) return;
     addExample({ imageHash: item.imageHash, fileName: item.fileName, caption: "", label: prompt.targetType === "boolean" ? gtRaw === true || gtRaw === "true" : String(gtRaw) });

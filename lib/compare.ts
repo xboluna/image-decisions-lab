@@ -57,7 +57,7 @@ export type Baseline<R> = { run: R; complete: boolean };
  * failed answers) is offered only when that version has no complete run. Runs scored before the current one come
  * first, newest first.
  */
-export function pickBaselines<R extends { id: string; promptHash: string; model: string; startedAt: string }>(
+export function pickBaselines<R extends { id: string; promptHash: string; model: string; startedAt: string; status?: string }>(
   candidates: R[],
   current: R,
   isComplete: (r: R) => boolean,
@@ -70,9 +70,8 @@ export function pickBaselines<R extends { id: string; promptHash: string; model:
   }
   const picks: Baseline<R>[] = [];
   for (const runs of byVersion.values()) {
-    const newestFirst = [...runs].sort((a, b) => b.startedAt.localeCompare(a.startedAt));
-    const complete = newestFirst.find(isComplete);
-    picks.push(complete ? { run: complete, complete: true } : { run: newestFirst[0], complete: false });
+    const run = preferredRun(runs as (R & { status: string })[], isComplete) as R;
+    picks.push({ run, complete: isComplete(run) });
   }
   picks.sort((a, b) => b.run.startedAt.localeCompare(a.run.startedAt));
   return [...picks.filter((p) => p.run.startedAt < current.startedAt), ...picks.filter((p) => p.run.startedAt >= current.startedAt)];
@@ -83,4 +82,15 @@ export function pairedRows(before: Row[], after: Row[]): { before: Row[]; after:
   const scoredBefore = new Set(before.filter((r) => r.status === "scored").map((r) => r.id));
   const shared = new Set(after.filter((r) => r.status === "scored" && scoredBefore.has(r.id)).map((r) => r.id));
   return { before: before.filter((r) => shared.has(r.id)), after: after.filter((r) => shared.has(r.id)) };
+}
+
+/**
+ * The run that stands for a version on a dataset: a run still scoring (so its answers fill in live), otherwise the
+ * newest complete run, otherwise the newest partial one. Used both for the version being viewed and the one
+ * compared against, so a cancelled re-run never replaces a complete run on either side.
+ */
+export function preferredRun<R extends { status: string; startedAt: string }>(runs: R[], isComplete: (r: R) => boolean): R | undefined {
+  const newestFirst = [...runs].sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  if (newestFirst[0]?.status === "running") return newestFirst[0];
+  return newestFirst.find(isComplete) ?? newestFirst[0];
 }

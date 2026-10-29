@@ -17,7 +17,7 @@ import {
   type Target,
   type View,
 } from "./metrics";
-import { pairedRows, pickBaselines } from "./compare";
+import { pairedRows, pickBaselines, preferredRun } from "./compare";
 import { useStore, type Role } from "./store";
 import type { ClassMapping, Dataset, Inference, Prompt, Run } from "./types";
 
@@ -77,13 +77,30 @@ export type ThresholdInfo = {
   trainRunId: string | null;
 };
 
-export function pickRun(runs: Run[], dataset: Dataset | undefined, prompt: Pick<Prompt, "targetKey"> | undefined, hash: string | undefined, model: string): { run: Run; stale: boolean } | null {
+export function pickRun(
+  runs: Run[],
+  dataset: Dataset | undefined,
+  prompt: Pick<Prompt, "targetKey"> | undefined,
+  hash: string | undefined,
+  model: string,
+  inferences: Record<string, Inference>,
+): { run: Run; stale: boolean } | null {
   if (!dataset || !prompt) return null;
   const sameData = runs.filter((r) => r.datasetHash === dataset.hash && r.targetKey === prompt.targetKey && Object.keys(r.results).length + (r.status === "running" ? 1 : 0) > 0);
-  const exact = sameData.filter((r) => r.promptHash === hash && r.model === model);
-  if (exact.length) return { run: exact[exact.length - 1], stale: false };
-  if (sameData.length) return { run: sameData[sameData.length - 1], stale: true };
-  return null;
+  const complete = (r: Run) => isCompleteRun(r, dataset, inferences);
+  const exact = preferredRun(
+    sameData.filter((r) => r.promptHash === hash && r.model === model),
+    complete,
+  );
+  if (exact) return { run: exact, stale: false };
+  // No run of this version yet: show the most recently scored other version, marked stale.
+  const newest = [...sameData].sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
+  if (!newest) return null;
+  const run = preferredRun(
+    sameData.filter((r) => versionKey(r) === versionKey(newest)),
+    complete,
+  );
+  return run ? { run, stale: true } : null;
 }
 
 export function targetFor(dataset: Dataset, prompt: Prompt): Target | null {
@@ -239,7 +256,7 @@ export function useExperiment(): {
     let threshold: ThresholdInfo = { value: defaultT, fitted: null, overridden: false, source: "default", trainRunId: null };
 
     let train: Analysis | null = null;
-    const trainPick = pickRun(s.runs, trainDs, prompt, hash, model);
+    const trainPick = pickRun(s.runs, trainDs, prompt, hash, model, s.inferences);
     if (trainDs && prompt && trainPick && target && targetFor(trainDs, prompt)) {
       const first = analyse("train", trainDs, trainPick, prompt, s.inferences, mapping, focus, defaultT, target);
       const fitted = first.view.mode === "binary" ? fitThreshold(first.rows) : null;
@@ -250,7 +267,7 @@ export function useExperiment(): {
       train = value === defaultT ? first : analyse("train", trainDs, trainPick, prompt, s.inferences, mapping, focus, value, target);
     }
     let test: Analysis | null = null;
-    const testPick = pickRun(s.runs, testDs, prompt, hash, model);
+    const testPick = pickRun(s.runs, testDs, prompt, hash, model, s.inferences);
     if (testDs && prompt && testPick && target && targetFor(testDs, prompt)) {
       test = analyse("test", testDs, testPick, prompt, s.inferences, mapping, focus, threshold.value, target);
     }
