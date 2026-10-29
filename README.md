@@ -5,9 +5,11 @@ A harness is a prompt (system text, a question, and ordered reference images) th
 with class probabilities. Image Decisions Lab scores a harness on a training set, fits a threshold, and checks it on
 a holdout test set, with every step hashed and exportable.
 
-![Import a dataset, score it, find the weak outputs, tune the prompt, re-score](docs/demo.gif)
+![Import a dataset, score it, find the weak outputs, tune the prompt, re-score, see what changed](docs/demo.gif)
 
-<sub>50-second walkthrough of the core loop, recorded on the live app ([MP4](docs/demo.mp4)). Re-record with `scripts/record-demo.mjs`.</sub>
+<sub>One-minute walkthrough of the core loop, recorded on the live app with real model calls ([MP4](docs/demo.mp4)): import a
+dataset, score it, find the weak outputs, turn a miss into a reference example, tune the prompt, re-score, and see image
+by image what the edit fixed and broke. Re-record with `scripts/record-demo.mjs` (instructions at the top of the file).</sub>
 
 Everything runs in the browser: datasets, prompts, runs, cached answers and the API key live in IndexedDB and
 local storage. Model calls go straight from the browser to `openrouter.ai`. There is no server code.
