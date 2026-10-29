@@ -3,6 +3,7 @@ import { createStore, del, get, getMany, keys, set, setMany, values } from "idb-
 import type { Dataset, Inference, Prompt, Run } from "./types";
 
 /** Everything lives in this browser's IndexedDB. Nothing is sent to a server except model requests to OpenRouter. */
+// The storage names keep the tool's first name, so renaming it never strands saved data.
 const DB = "harness-studio";
 const stores = {
   images: () => createStore(`${DB}-images`, "images"),

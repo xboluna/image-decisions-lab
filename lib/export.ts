@@ -8,7 +8,7 @@ import { ALL } from "./metrics";
 import { buildQuestion, buildState, questionId, STATE_TEMPLATE_VERSION, JPEG_QUALITY } from "./prompt";
 import type { ClassMapping, Dataset, Prompt } from "./types";
 
-export const TOOL = { name: "Harness Studio", version: "0.1.0" };
+export const TOOL = { name: "Image Decisions Lab", version: "0.1.0" };
 
 export function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);

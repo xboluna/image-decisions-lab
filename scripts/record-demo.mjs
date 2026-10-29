@@ -107,7 +107,7 @@ async function typeInto(locator, text, delay = 14) { await click(locator); await
 await page.goto(BASE, { waitUntil: "networkidle" });
 await page.waitForSelector("text=Add a training dataset");
 await page.mouse.move(mouse.x, mouse.y);
-await card("Harness Studio", "Tune an image classifier on a decision model, in your browser.", ["Import", "Score", "Inspect", "Tune", "Re-score"]);
+await card("Image Decisions Lab", "Tune an image classifier on a decision model, in your browser.", ["Import", "Score", "Inspect", "Tune", "Re-score"]);
 await wait(2600);
 await hideCard();
 await wait(500);
@@ -201,7 +201,7 @@ await wait(2800);
 await page.keyboard.press("Escape");
 await page.evaluate(() => document.getElementById("demo-cap").classList.remove("on"));
 
-await card("Harness Studio", "Every dataset, prompt and answer is hashed and exportable.", ["Import", "Score", "Inspect", "Tune", "Re-score"]);
+await card("Image Decisions Lab", "Every dataset, prompt and answer is hashed and exportable.", ["Import", "Score", "Inspect", "Tune", "Re-score"]);
 await wait(2600);
 const video = page.video();
 await ctx.close();

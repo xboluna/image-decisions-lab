@@ -3,7 +3,7 @@ import type { ContentPart, Usage } from "./types";
 
 export const DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions";
 export const KEY_URL = "https://openrouter.ai/api/v1/key";
-const APP_TITLE = "Harness Studio";
+const APP_TITLE = "Image Decisions Lab";
 
 export type KeyInfo = {
   label: string;
