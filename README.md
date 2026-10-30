@@ -16,7 +16,9 @@ local storage. Model calls go straight from the browser to `openrouter.ai`. Ther
 3. **Settings.** Paste an OpenRouter key (checked against `/api/v1/key`, which shows the spending limit) and pick
    a decision model. The key is saved client-side, and never goes anywhere.
 4. **Score the training set.** Accuracy, balanced accuracy, the score histogram, precision-recall curves and the
-   confusion matrix. Optionally choose (or fit) a threshold to maximize balanced accuracy.
+   confusion matrix. Optionally choose (or fit) a threshold to maximize balanced accuracy. Turn on
+   **Advanced metrics** in the ⋯ menu for AUROC, cross-validated balanced accuracy (threshold fitted on one half
+   of the images, scored on the other) and macro balanced accuracy (one-vs-rest per class with at least 3 images).
 5. **Score the test set.**
 6. **Compare versions.** Save prompt versions. Easily switch between them to compare results.
 7. **Inspect.** Filter images by any label, predicted class, outcome (TP/FP/FN/TN or right/wrong), score range
