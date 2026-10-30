@@ -38,6 +38,11 @@ local storage. Model calls go straight from the browser to `openrouter.ai`. Ther
    per-image answers (JSONL and CSV), metrics, PR curves, confusion matrix, histogram, and the charts as SVG.
    The metrics record the version compared against, with both versions' metrics on the images scored in both;
    tick **Include advanced metrics** to add AUROC, cross-validated and macro balanced accuracy.
+9. **Import experiment.** ⋯ → Import experiment (or the button on an empty training panel) takes a folder or zip:
+   an exported experiment, or any folder with a `prompt.json` and ImageFolder dataset folders (folders named
+   train / test / holdout / val get that role). Review what was found, adjust roles, and import it all at once.
+   An exported experiment also restores the model's saved answers onto the same dataset version, so its
+   results show without scoring again.
 
 ## Pixel parity
 

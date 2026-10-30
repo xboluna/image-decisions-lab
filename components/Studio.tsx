@@ -2,6 +2,7 @@
 import { AlertTriangle, Info } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
+import { BundleImportDialog } from "./BundleImportDialog";
 import { DatasetPanel } from "./DatasetPanel";
 import { Header } from "./Header";
 import { PromptBuilder } from "./PromptBuilder";
@@ -101,6 +102,7 @@ export function Studio() {
           </footer>
         </main>
       )}
+      <BundleImportDialog />
       <Toast />
     </>
   );

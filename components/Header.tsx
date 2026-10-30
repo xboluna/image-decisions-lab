@@ -1,5 +1,5 @@
 "use client";
-import { ArrowRight, Download, Eraser, Monitor, Moon, MoreHorizontal, RefreshCw, Sigma, Sun, Trash2 } from "lucide-react";
+import { ArrowRight, Download, Eraser, Monitor, Moon, MoreHorizontal, PackageOpen, RefreshCw, Sigma, Sun, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useExperiment } from "@/lib/analysis";
 import { exportExperiment } from "@/lib/export";
@@ -84,9 +84,10 @@ export function Header() {
   const [theme, setTheme] = useTheme();
   const [menu, setMenu] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
-  const [includeImages, setIncludeImages] = useState(false);
+  const [includeImages, setIncludeImages] = useState(true);
   const [exportAdvanced, setExportAdvanced] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
+  const setBundleImportOpen = useStore((s) => s.setBundleImportOpen);
   const advancedMetrics = useStore((s) => s.settings.advancedMetrics);
   const setSettings = useStore((s) => s.setSettings);
   const [confirm, setConfirm] = useState<null | "reset" | "demo" | "clearDemo">(null);
@@ -178,6 +179,15 @@ export function Header() {
               </button>
               <div className="my-1 border-t border-line" />
               <MenuItem
+                icon={<PackageOpen className="size-4" />}
+                onClick={() => {
+                  setMenu(false);
+                  setBundleImportOpen(true);
+                }}
+              >
+                Import experiment…
+              </MenuItem>
+              <MenuItem
                 icon={<RefreshCw className="size-4" />}
                 onClick={() => {
                   setMenu(false);
@@ -258,7 +268,7 @@ export function Header() {
         </ul>
         <label className="mt-3 flex items-center gap-2 text-[12.5px]">
           <input type="checkbox" checked={includeImages} onChange={(e) => setIncludeImages(e.target.checked)} className="accent-[var(--accent)]" />
-          Include dataset images (larger download)
+          Include dataset images (needed to import the experiment again)
         </label>
         <label className="mt-2 flex items-start gap-2 text-[12.5px]">
           <input type="checkbox" checked={exportAdvanced ?? advancedMetrics} onChange={(e) => setExportAdvanced(e.target.checked)} className="mt-0.5 accent-[var(--accent)]" aria-label="Include advanced metrics" />

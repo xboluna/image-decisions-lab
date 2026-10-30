@@ -40,7 +40,7 @@ export function filesFromInput(list: FileList): FileEntry[] {
   return Array.from(list).map((f) => ({ path: normalizePath((f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name), file: f }));
 }
 
-async function expandZips(files: FileEntry[], onProgress?: (p: ImportProgress) => void): Promise<FileEntry[]> {
+export async function expandZips(files: FileEntry[], onProgress?: (p: ImportProgress) => void): Promise<FileEntry[]> {
   const out: FileEntry[] = [];
   for (const entry of files) {
     if (!entry.path.toLowerCase().endsWith(".zip")) {

@@ -36,6 +36,8 @@ type State = {
   live: Partial<Record<Role, Live>>;
   runErrors: Partial<Record<Role, string>>;
   toast: { id: number; text: string; tone: "info" | "error" } | null;
+  bundleImportOpen: boolean;
+  setBundleImportOpen: (open: boolean) => void;
 
   hydrate: () => Promise<void>;
   notify: (text: string, tone?: "info" | "error") => void;
@@ -135,6 +137,8 @@ export const useStore = create<State>((set, get) => {
     live: {},
     runErrors: {},
     toast: null,
+    bundleImportOpen: false,
+    setBundleImportOpen: (open) => set({ bundleImportOpen: open }),
 
     async hydrate() {
       const { seedDemoIfEmpty } = await import("./demo");

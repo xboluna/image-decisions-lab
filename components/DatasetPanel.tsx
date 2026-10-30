@@ -1,5 +1,5 @@
 "use client";
-import { AlertTriangle, ChevronDown, Database, Download, History, Pencil, Play, Plus, Square, Trash2 } from "lucide-react";
+import { AlertTriangle, ChevronDown, Database, Download, History, PackageOpen, Pencil, Play, Plus, Square, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { pickRun, targetFor, useExperiment, type Analysis } from "@/lib/analysis";
@@ -254,6 +254,7 @@ export function DatasetPanel({ role, fillHeight }: { role: Role; fillHeight?: nu
   const live = useStore((s) => s.live[role]);
   const runError = useStore((s) => s.runErrors[role]);
   const startRun = useStore((s) => s.startRun);
+  const setBundleImportOpen = useStore((s) => s.setBundleImportOpen);
   const cancelRun = useStore((s) => s.cancelRun);
   const deleteDataset = useStore((s) => s.deleteDataset);
   const promptHashes = useStore((s) => s.promptHashes);
@@ -348,9 +349,16 @@ export function DatasetPanel({ role, fillHeight }: { role: Role; fillHeight?: nu
           <p className="mt-1 max-w-sm text-[12.5px] text-ink-2">
             {role === "train" ? "Upload a folder of labelled images to fit and tune the prompt on." : "Keep a holdout set apart from the training set. It is scored with the training threshold, never its own."}
           </p>
-          <Button className="mt-3" variant="primary" icon={<Plus className="size-3.5" />} onClick={() => setUploadOpen(true)}>
-            New dataset
-          </Button>
+          <div className="mt-3 flex flex-wrap justify-center gap-2">
+            <Button variant="primary" icon={<Plus className="size-3.5" />} onClick={() => setUploadOpen(true)}>
+              New dataset
+            </Button>
+            {role === "train" && (
+              <Button icon={<PackageOpen className="size-3.5" />} onClick={() => setBundleImportOpen(true)}>
+                Import experiment
+              </Button>
+            )}
+          </div>
         </div>
       ) : (
         <>
