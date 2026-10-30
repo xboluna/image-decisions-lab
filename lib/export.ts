@@ -4,7 +4,8 @@ import type { Analysis, ThresholdInfo } from "./analysis";
 import { db } from "./db";
 import { sha256Bytes, shortHash } from "./hash";
 import { manifestJsonl } from "./manifest";
-import { ALL } from "./metrics";
+import { pairedRows } from "./compare";
+import { ALL, computeAdvanced } from "./metrics";
 import { buildQuestion, buildState, exampleViews, IMAGE_PIPELINE, JPEG_QUALITY, promptViews, questionId, STATE_TEMPLATE_VERSION } from "./prompt";
 import { modelJpeg } from "./runner";
 import type { ClassMapping, Dataset, Prompt } from "./types";
@@ -212,13 +213,61 @@ export function serializeSvg(svg: SVGSVGElement): string {
   return `<?xml version="1.0" encoding="UTF-8"?>\n${new XMLSerializer().serializeToString(clone)}`;
 }
 
-function metricsRecord(a: Analysis, threshold: ThresholdInfo) {
+/** Robust metrics for the export: the same values the Advanced metrics tiles show. */
+function advancedRecord(a: Analysis, mapping: ClassMapping) {
+  const m = computeAdvanced(a.rows, a.target, mapping, a.view);
+  return {
+    auroc: m.auroc,
+    cross_validated_balanced_accuracy: a.role === "train" ? m.crossValidatedBa : null,
+    macro_balanced_accuracy: m.macroBa,
+    macro_classes: m.macroClasses,
+    notes: {
+      auroc: a.view.mode === "binary" ? "Mann-Whitney on the positive score; ties count half" : "one-vs-rest average over classes with both cases",
+      cross_validated_balanced_accuracy:
+        a.role !== "train" ? "not computed: the test set uses the training threshold" : a.view.mode !== "binary" ? "not computed: the all-classes view fits no threshold" : "threshold fitted on one fixed half, scored on the other, both ways; halves stratified by class, ordered by a mixed hash of the image id",
+      macro_balanced_accuracy: "one-vs-rest balanced accuracy per class, averaged over classes with at least 3 images",
+    },
+  };
+}
+
+/** The version every delta is measured against, and both versions' metrics on the images scored in both. */
+function comparisonRecord(a: Analysis, mapping: ClassMapping, advanced: boolean) {
+  const b = a.baseline;
+  if (!b) return null;
+  const paired = pairedRows(b.rows, a.rows);
+  const delta = (x: number | null | undefined, y: number | null | undefined) => (x != null && y != null ? x - y : null);
+  return {
+    compared_against: { prompt_name: b.run.promptName, prompt_hash: `sha256:${b.run.promptHash}`, model: b.run.model, run_id: b.run.id, complete_run: b.complete },
+    paired_images: b.paired,
+    before: b.before,
+    after: b.after,
+    deltas: { balanced_accuracy: delta(b.after.balancedAccuracy, b.before.balancedAccuracy), accuracy: delta(b.after.accuracy, b.before.accuracy) },
+    ...(advanced
+      ? (() => {
+          const x = computeAdvanced(paired.after, a.target, mapping, a.view);
+          const y = computeAdvanced(paired.before, a.target, mapping, a.view);
+          return {
+            advanced_deltas: {
+              auroc: delta(x.auroc, y.auroc),
+              // the same rule as the tile: only where a threshold is fitted (training set, binary views)
+              cross_validated_balanced_accuracy: a.role === "train" ? delta(x.crossValidatedBa, y.crossValidatedBa) : null,
+              macro_balanced_accuracy: delta(x.macroBa, y.macroBa),
+            },
+          };
+        })()
+      : {}),
+  };
+}
+
+function metricsRecord(a: Analysis, threshold: ThresholdInfo, mapping: ClassMapping, advanced: boolean) {
   return {
     run: { id: a.run.id, status: a.run.status, started_at: a.run.startedAt, finished_at: a.run.finishedAt, model: a.run.model, prompt_hash: `sha256:${a.run.promptHash}`, dataset_hash: `sha256:${a.run.datasetHash}`, cost_usd: a.run.costUsd, cached: a.run.cachedCount },
     stale: a.stale,
     view: a.view.mode === "binary" ? { mode: "binary", positive_class: a.view.positive } : { mode: "multiclass" },
     threshold: { value: threshold.value, fitted_on_training_set: threshold.fitted, source: threshold.source, meaning: a.view.mode === "binary" ? "score >= threshold is called positive" : "answers below this top-class probability are flagged for review" },
     metrics: a.metrics,
+    ...(advanced ? { advanced_metrics: advancedRecord(a, mapping) } : {}),
+    comparison: comparisonRecord(a, mapping, advanced),
     confusion_matrix: { rows_are: "actual", columns_are: "predicted", labels: a.confusion.labels, cells: a.confusion.cells },
     pr_curves: a.curves.map((c) => ({ class: c.key === ALL ? "micro-average" : c.key, average_precision: c.ap, positives: c.positives, points: c.points })),
     histogram: { bin_edges: a.hist.edges, series: a.hist.series },
@@ -238,6 +287,8 @@ export async function exportExperiment(opts: {
   trainDataset?: Dataset;
   testDataset?: Dataset;
   includeImages: boolean;
+  /** Add AUROC, cross-validated and macro balanced accuracy to metrics.json and experiment.json. */
+  advancedMetrics: boolean;
 }) {
   const zip = new JSZip();
   const { prompt, promptHash: hash } = opts;
@@ -256,9 +307,23 @@ export async function exportExperiment(opts: {
     const preds = predictions(a, prompt);
     folder.file("predictions.jsonl", preds.map((p) => JSON.stringify(p)).join("\n") + "\n");
     folder.file("predictions.csv", predictionsCsv(preds, a.groups));
-    const m = metricsRecord(a, opts.threshold);
+    const m = metricsRecord(a, opts.threshold, opts.mapping, opts.advancedMetrics);
     folder.file("metrics.json", JSON.stringify(m, null, 2));
-    summary[role] = { dataset: a.dataset.name, dataset_hash: `sha256:${a.dataset.hash}`, run_id: a.run.id, prompt_hash: `sha256:${a.run.promptHash}`, model: a.run.model, stale: a.stale, accuracy: a.metrics.accuracy, balanced_accuracy: a.metrics.balancedAccuracy, n: a.metrics.n };
+    summary[role] = {
+      dataset: a.dataset.name,
+      dataset_hash: `sha256:${a.dataset.hash}`,
+      run_id: a.run.id,
+      prompt_hash: `sha256:${a.run.promptHash}`,
+      model: a.run.model,
+      stale: a.stale,
+      accuracy: a.metrics.accuracy,
+      balanced_accuracy: a.metrics.balancedAccuracy,
+      n: a.metrics.n,
+      ...(m.advanced_metrics
+        ? { auroc: m.advanced_metrics.auroc, cross_validated_balanced_accuracy: m.advanced_metrics.cross_validated_balanced_accuracy, macro_balanced_accuracy: m.advanced_metrics.macro_balanced_accuracy }
+        : {}),
+      ...(m.comparison ? { compared_against: m.comparison.compared_against.prompt_hash, balanced_accuracy_delta: m.comparison.deltas.balanced_accuracy } : {}),
+    };
     for (const svg of Array.from(document.querySelectorAll<SVGSVGElement>(`svg[data-export="${role}"]`))) {
       folder.file(`charts/${svg.dataset.chart}.svg`, serializeSvg(svg));
     }
@@ -292,7 +357,7 @@ Exported from ${TOOL.name} ${TOOL.version} on ${e.exported_at}.
 - \`datasets/{train,test}/\`: \`metadata.jsonl\` + \`dataset.json\` (Hugging Face ImageFolder layout) with each dataset's hash.
 - \`results/{train,test}/predictions.jsonl\`: one line per image with the label, the model's raw answer, probabilities, score, prediction, outcome, cost and latency.
 - \`results/{train,test}/predictions.csv\`: the same, flattened.
-- \`results/{train,test}/metrics.json\`: accuracy, balanced accuracy, per-class precision and recall, confusion matrix, precision-recall curves and the score histogram.
+- \`results/{train,test}/metrics.json\`: accuracy, balanced accuracy, per-class precision and recall, confusion matrix, precision-recall curves and the score histogram; the version compared against and both versions' metrics on the images scored in both; and, when chosen, advanced metrics (AUROC, cross-validated and macro balanced accuracy).
 - \`results/{train,test}/charts/*.svg\`: the charts as shown.
 
 Model: ${e.model}. Prompt hash: ${e.prompt.hash}.

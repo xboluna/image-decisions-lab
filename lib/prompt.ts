@@ -98,7 +98,8 @@ export function promptHash(prompt: Prompt): Promise<string> {
     // Only prompts that use views hash them, so every earlier prompt keeps its hash and cached answers.
     ...(views
       ? {
-          views: promptViews(prompt).map((v, k) => ({ caption: viewCaption(v, k, prompt), ops: v.ops, enlarge: v.enlarge })),
+          // exactly the caption text sent: buildState sends one only for several views or a custom caption
+          views: promptViews(prompt).map((v, k, all) => ({ caption: all.length > 1 || v.caption.trim() ? viewCaption(v, k, prompt) : null, ops: v.ops, enlarge: v.enlarge })),
           regions: (prompt.regions ?? []).map((r) => ({ id: r.id, box: r.box })),
         }
       : {}),
