@@ -1,6 +1,5 @@
 "use client";
 import { db } from "./db";
-import { decodeRgb } from "./image";
 import { applyOps, type ImageOp, type Region, type Rgb } from "./ops";
 
 /** Longest side of images decoded for on-screen previews: enough detail to place boxes, small enough to stay fast. */
@@ -18,28 +17,11 @@ export function previewRgb(hash: string): Promise<PreviewRgb | null> {
     p = (async () => {
       const blob = await db.getImage(hash);
       if (!blob) return null;
-      const bitmap = await createImageBitmap(blob);
-      const scale = Math.min(1, PREVIEW_SIDE / Math.max(bitmap.width, bitmap.height));
-      const source = { sourceWidth: bitmap.width, sourceHeight: bitmap.height };
-      const w = Math.max(1, Math.round(bitmap.width * scale));
-      const h = Math.max(1, Math.round(bitmap.height * scale));
-      bitmap.close();
-      if (scale === 1) return { ...(await decodeRgb(blob)), ...source };
-      const small = await createImageBitmap(blob, { resizeWidth: w, resizeHeight: h, resizeQuality: "high" });
-      const canvas = document.createElement("canvas");
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext("2d") as CanvasRenderingContext2D;
-      ctx.drawImage(small, 0, 0);
-      small.close();
-      const rgba = ctx.getImageData(0, 0, w, h).data;
-      const data = new Uint8Array(w * h * 3);
-      for (let i = 0, j = 0; i < rgba.length; i += 4, j += 3) {
-        data[j] = rgba[i];
-        data[j + 1] = rgba[i + 1];
-        data[j + 2] = rgba[i + 2];
-      }
-      return { width: w, height: h, data, ...source };
+      // The same decoder as the images sent (no EXIF rotation, like Pillow), so boxes drawn here land on the same
+      // pixels; then Pillow's thumbnail for the preview copy.
+      const [{ decodeToRgb }, { thumbnail }] = await Promise.all([import("./decodeImage"), import("./pillow")]);
+      const { image } = await decodeToRgb(new Uint8Array(await blob.arrayBuffer()));
+      return { ...thumbnail(image, PREVIEW_SIDE), sourceWidth: image.width, sourceHeight: image.height };
     })().catch(() => null);
     decoded.set(hash, p);
   }

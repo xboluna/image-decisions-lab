@@ -41,6 +41,7 @@ export const OP_LABELS: Record<ImageOp["kind"], string> = {
 
 export const DEFAULT_OUTLINE = "#ff00ff";
 
+/** A new operation of this kind on the given area (a rotate has no area and ignores it). */
 export function defaultOp(kind: ImageOp["kind"], area: Area): ImageOp {
   switch (kind) {
     case "crop":

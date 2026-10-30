@@ -1,5 +1,4 @@
 "use client";
-import type { Rgb } from "./ops";
 
 async function decode(blob: Blob): Promise<ImageBitmap> {
   return createImageBitmap(blob);
@@ -64,22 +63,4 @@ export function mimeFor(path: string): string {
   if (lower.endsWith(".bmp")) return "image/bmp";
   if (lower.endsWith(".gif")) return "image/gif";
   return "image/jpeg";
-}
-
-/** Decodes an image into RGB pixels with the browser, for on-screen previews (images sent to the model use lib/decodeImage.ts). */
-export async function decodeRgb(blob: Blob): Promise<Rgb> {
-  const bitmap = await decode(blob);
-  const canvas = canvasFor(bitmap.width, bitmap.height);
-  const ctx = canvas.getContext("2d") as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
-  if (!ctx) throw new Error("This browser cannot draw images to a canvas.");
-  ctx.drawImage(bitmap, 0, 0);
-  bitmap.close();
-  const rgba = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-  const data = new Uint8Array(canvas.width * canvas.height * 3);
-  for (let i = 0, j = 0; i < rgba.length; i += 4, j += 3) {
-    data[j] = rgba[i];
-    data[j + 1] = rgba[i + 1];
-    data[j + 2] = rgba[i + 2];
-  }
-  return { width: canvas.width, height: canvas.height, data };
 }

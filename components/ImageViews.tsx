@@ -73,7 +73,16 @@ export type StageBox = { id: string; label: string; box: Box; color: string; edi
 export function BoxStage({ rgb, boxes, selected, onSelect, onChange, onCreate, label }: { rgb: Rgb; boxes: StageBox[]; selected: string | null; onSelect: (id: string | null) => void; onChange: (id: string, box: Box) => void; onCreate?: (box: Box) => void; label: string }) {
   const wrap = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<null | { id: string | null; mode: "move" | "nw" | "ne" | "sw" | "se" | "new"; start: [number, number]; box: Box }>(null);
-  const [draft, setDraft] = useState<Box | null>(null);
+  const [draft, setDraftState] = useState<Box | null>(null);
+  // Listeners are attached once per drag and read the latest values from refs, so a parent re-render (previews
+  // update on every move) never leaves a gap where the pointerup could be missed.
+  const draftRef = useRef<Box | null>(null);
+  const setDraft = (b: Box | null) => {
+    draftRef.current = b;
+    setDraftState(b);
+  };
+  const handlers = useRef({ onChange, onCreate });
+  handlers.current = { onChange, onCreate };
   const point = (e: { clientX: number; clientY: number }): [number, number] => {
     const r = wrap.current!.getBoundingClientRect();
     return [Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), Math.min(1, Math.max(0, (e.clientY - r.top) / r.height))];
@@ -101,20 +110,25 @@ export function BoxStage({ rgb, boxes, selected, onSelect, onChange, onCreate, l
       }
       const rounded = b.map((v) => Math.round(v * 10000) / 10000) as Box;
       if (drag.mode === "new") setDraft(rounded);
-      else if (drag.id) onChange(drag.id, rounded);
+      else if (drag.id) handlers.current.onChange(drag.id, rounded);
     };
     const up = () => {
-      if (drag.mode === "new" && draft && onCreate && draft[2] - draft[0] > 0.01 && draft[3] - draft[1] > 0.01) onCreate(draft);
+      const d = draftRef.current;
+      const create = handlers.current.onCreate;
+      if (drag.mode === "new" && d && create && d[2] - d[0] > 0.01 && d[3] - d[1] > 0.01) create(d);
       setDrag(null);
       setDraft(null);
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
     return () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
     };
-  });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drag]);
   const sel = boxes.find((b) => b.id === selected && b.editable);
   return (
     <div
@@ -610,7 +624,7 @@ export function ViewsEditor({ prompt, samples, model, onSave, onClose }: { promp
                   </ol>
                 )}
                 <div className="mt-1.5 flex flex-wrap items-center justify-between gap-1">
-                  <AddOpMenu onAdd={(kind) => setView(i, { ...view, ops: [...view.ops, defaultOp(kind, areaForNewOp())] })} />
+                  <AddOpMenu onAdd={(kind) => setView(i, { ...view, ops: [...view.ops, kind === "rotate" ? defaultOp(kind, { box: [0, 0, 1, 1] }) : defaultOp(kind, areaForNewOp())] })} />
                   <label className="flex items-center gap-1.5 text-[11.5px] text-ink-2" title="Small results (a tight crop) are sent at the full image size instead of their own size">
                     <input type="checkbox" checked={view.enlarge} onChange={(e) => setView(i, { ...view, enlarge: e.target.checked })} className="accent-[var(--accent)]" aria-label={`Enlarge view ${i + 1}`} />
                     Enlarge to {prompt.imageMaxSide}px

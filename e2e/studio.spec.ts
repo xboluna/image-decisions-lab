@@ -753,3 +753,35 @@ test("advanced metrics are off by default and toggled from the ⋯ menu", async 
   await page.reload();
   await expect(train(page).locator("[data-advanced-metrics]")).toBeVisible({ timeout: 30_000 });
 });
+
+test("previews ignore EXIF orientation, like the images sent", async ({ page }) => {
+  await open(page);
+  // a demo JPEG (1024×640) tagged "rotate 90°" in EXIF: browsers would show it 640×1024, Pillow (and the send path) do not
+  const jpeg = readFileSync(path.join(process.cwd(), "public/demo/train/images/scene0_frame112.jpg"));
+  const tiff = Buffer.from("4d4d002a00000008000101120003000000010006000000000000", "hex");
+  const app1 = Buffer.concat([Buffer.from([0xff, 0xe1, 0x00, 6 + tiff.length + 2]), Buffer.from("Exif\0\0", "binary"), tiff]);
+  const rotated = Buffer.concat([jpeg.subarray(0, 2), app1, jpeg.subarray(2)]);
+  const zip = new JSZip();
+  zip.file("exif/metadata.jsonl", JSON.stringify({ file_name: "images/tagged.jpg", fifty_ml_tubes: "2" }));
+  zip.file("exif/dataset.json", readFileSync(path.join(process.cwd(), "public/demo/train/dataset.json")));
+  zip.file("exif/images/tagged.jpg", rotated);
+  const out = path.join(mkdtempSync(path.join(tmpdir(), "hs-")), "exif.zip");
+  writeFileSync(out, await zip.generateAsync({ type: "nodebuffer" }));
+  await train(page).getByRole("button", { name: "New", exact: true }).click();
+  await page.getByRole("dialog").locator('input[type=file][accept*="zip"]').setInputFiles(out);
+  await page.getByRole("dialog").getByRole("button", { name: /^Import/ }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Done" }).click();
+  await train(page).locator("[data-grid-scroll] button:has(img)").first().click();
+  await page.getByRole("dialog").getByRole("button", { name: "Crop & add…" }).click();
+  const stage = page.locator("[data-image-editor] [data-box-stage]");
+  await expect(stage).toHaveAttribute("style", /aspect-ratio: 1024 \/ 640/);
+});
+
+test("adding a rotate does not create a region", async ({ page }) => {
+  await open(page);
+  await page.locator("[data-views-section]").getByRole("button", { name: "Add views" }).click();
+  await page.getByRole("button", { name: "Add operation" }).click();
+  await page.getByRole("button", { name: /^Rotate/ }).click();
+  await expect(page.locator("[data-views-editor] [data-op='rotate']")).toHaveCount(1);
+  await expect(page.locator("[data-views-editor]")).toContainText("No regions yet");
+});
