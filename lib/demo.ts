@@ -4,7 +4,7 @@ import { importDataset, type FileEntry } from "./importer";
 import { parseJsonl } from "./manifest";
 import type { ClassMapping, Inference, Prompt, Run } from "./types";
 
-export const DEMO_VERSION = 4;
+export const DEMO_VERSION = 5;
 
 type Seed = {
   version: number;

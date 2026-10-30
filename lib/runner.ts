@@ -1,6 +1,6 @@
 "use client";
 import { db } from "./db";
-import { blobToDataUrl, resizeJpeg } from "./image";
+import { blobToDataUrl } from "./image";
 import { modelInfo } from "./models";
 import { answerProbabilities, decide } from "./openrouter";
 import { buildQuestion, buildState, inferenceKey, JPEG_QUALITY, questionId } from "./prompt";
@@ -20,11 +20,18 @@ export function imageLimitProblem(prompt: Prompt, model: string): string | null 
   return null;
 }
 
-async function encode(hash: string, maxSide: number): Promise<string> {
+/** The exact JPEG the model is sent for a stored image (lib/modelImage.ts; Pillow-identical). */
+export async function modelJpeg(hash: string, maxSide: number) {
   const blob = await db.getImage(hash);
   if (!blob) throw new Error("An image is missing from this browser's storage. Re-import the dataset.");
-  const { blob: jpeg } = await resizeJpeg(blob, maxSide, JPEG_QUALITY);
-  return blobToDataUrl(jpeg);
+  // Loaded on first use so the WebAssembly decoder stays out of the initial page.
+  const { encodeForModel } = await import("./modelImage");
+  return encodeForModel(new Uint8Array(await blob.arrayBuffer()), maxSide, JPEG_QUALITY);
+}
+
+async function encode(hash: string, maxSide: number): Promise<string> {
+  const { jpeg } = await modelJpeg(hash, maxSide);
+  return blobToDataUrl(new Blob([jpeg as BlobPart], { type: "image/jpeg" }));
 }
 
 /**

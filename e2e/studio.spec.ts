@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import JSZip from "jszip";
+import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -229,6 +230,14 @@ test("exports: dataset and experiment bundles", async ({ page }) => {
   expect(preds[0].raw_answer).toBeTruthy();
   const prompt = JSON.parse(await zip.file(find("prompt/prompt.json"))!.async("string"));
   expect(prompt.examples).toHaveLength(3);
+  expect(prompt.image.pipeline).toBe("pillow-thumbnail-bicubic/libjpeg-turbo-q85-420");
+  // the exact JPEG sent for each example, with its hash, so another pipeline can verify it sends the same bytes
+  expect(prompt.sent_examples).toHaveLength(3);
+  for (const s of prompt.sent_examples) {
+    const bytes = await zip.file(find(`prompt/${s.file}`))!.async("nodebuffer");
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe(s.sha256);
+    expect(s.pixel_exact).toBe(true);
+  }
   expect(all.some((n) => n.endsWith("results/train/charts/confusion_matrix.svg"))).toBe(true);
   const svg = await zip.file(find("results/train/charts/score_histogram.svg"))!.async("string");
   expect(svg).not.toContain("var(--");
@@ -475,7 +484,7 @@ test("the comparison bar names the baseline, and peeking shows that version unti
   await expect(page.getByLabel("Question")).toBeDisabled();
   await expect(train(page).getByRole("button", { name: "Score training set" })).toBeDisabled();
   await expect(train(page).locator("text=Balanced accuracy").first().locator("..").locator("..")).toContainText("▼");
-  await expect(page.locator("nav[aria-label=Experiment] > div").nth(1)).toContainText("51755a05");
+  await expect(page.locator("nav[aria-label=Experiment] > div").nth(1)).toContainText("c2f39c93");
 
   await page.locator("[data-peek-banner]").getByRole("button", { name: "Switch back" }).click();
   await expect(bar).toContainText("Comparing against");
