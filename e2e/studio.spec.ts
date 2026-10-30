@@ -634,7 +634,9 @@ test("reference examples can be cropped, and new ones cut from any training imag
   await page.getByRole("dialog").getByRole("button", { name: "Crop & add…" }).click();
   await expect(page.locator("[data-image-editor]")).toBeVisible();
   await drawOnStage(page, [0.1, 0.1], [0.4, 0.5]);
-  await expect(page.locator("[data-image-editor] [data-op='crop']")).toHaveCount(2);
+  // drawing redraws the starting crop instead of stacking a second one (which would keep only the overlap)
+  await expect(page.locator("[data-image-editor] [data-op='crop']")).toHaveCount(1);
+  await expect(page.locator("[data-image-editor] [data-view-preview]")).toContainText(/\d+×\d+ px/);
   // Escape closes only the editor, not the image viewer under it
   await page.keyboard.press("Escape");
   await expect(page.locator("[data-image-editor]")).toHaveCount(0);
@@ -838,4 +840,23 @@ test("the export's cross-validated delta matches the tile in a one-vs-rest view"
   const d = metrics.comparison.advanced_deltas.cross_validated_balanced_accuracy;
   expect(typeof d).toBe("number");
   if (shown) expect(Math.abs(d * 100).toFixed(1)).toBe(shown[2]);
+});
+
+test("drawing in the image editor redraws the crop and keeps its outline on the same area", async ({ page }) => {
+  await open(page);
+  await train(page).locator("[data-grid-scroll] button:has(img)").first().click();
+  await page.getByRole("dialog").getByRole("button", { name: "Crop & add…" }).click();
+  const editor = page.locator("[data-image-editor]");
+  await editor.getByRole("button", { name: "Add edit" }).click();
+  await page.getByRole("button", { name: /^Outline/ }).click();
+  await expect(editor.locator("[data-op]")).toHaveCount(2);
+  // a box drawn far from the starting centre crop: the result is the drawn area, not an empty overlap
+  await drawOnStage(page, [0.02, 0.05], [0.22, 0.45]);
+  await expect(editor.locator("[data-op='crop']")).toHaveCount(1);
+  await expect(editor.locator("[data-op]")).toHaveCount(2);
+  // the 1024×640 source cropped to ~20% × 40% (+12% margin) is about 230×290 px, not a sliver
+  const size = (await editor.locator("[data-view-preview]").innerText()).match(/(\d+)×(\d+) px/)!;
+  expect(Number(size[1])).toBeGreaterThan(200);
+  expect(Number(size[2])).toBeGreaterThan(250);
+  await expect(editor.locator("[data-box-stage] [data-box]")).toHaveCount(1); // crop and outline share the one area
 });

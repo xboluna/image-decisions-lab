@@ -661,10 +661,22 @@ export function ImageEditor({ hash, name, initialOps, regions, maxSide, title, s
   };
   // Boxes: each drawn area once (shared by every step that uses it), plus the prompt's regions, dashed.
   const stageBoxes: StageBox[] = [];
+  const firstWithBox = new Map<string, number>();
   ops.forEach((o, i) => {
     if (!("area" in o) || !("box" in o.area)) return;
+    const key = o.area.box.join();
+    const first = firstWithBox.get(key);
+    if (first != null) {
+      const shared = stageBoxes.find((b) => b.id === `op${first}`)!;
+      shared.label += `, ${i + 1} · ${OP_LABELS[o.kind]}`;
+      return;
+    }
+    firstWithBox.set(key, i);
     stageBoxes.push({ id: `op${i}`, label: `${i + 1} · ${OP_LABELS[o.kind]}`, box: o.area.box, color: STAGE_COLORS[i % STAGE_COLORS.length], editable: true });
   });
+  // the box of the selected step: the first step that uses the same area
+  const selectedOp = selected != null ? ops[selected] : undefined;
+  const selectedBox = selectedOp && "area" in selectedOp && "box" in selectedOp.area ? `op${firstWithBox.get(selectedOp.area.box.join())}` : null;
   regions.forEach((r, i) => stageBoxes.push({ id: `rg${r.id}`, label: r.name, box: r.box, color: STAGE_COLORS[(i + 3) % STAGE_COLORS.length], editable: false }));
 
   return (
@@ -692,7 +704,7 @@ export function ImageEditor({ hash, name, initialOps, regions, maxSide, title, s
               rgb={rgb}
               label="Image to edit"
               boxes={stageBoxes}
-              selected={selected != null ? `op${selected}` : null}
+              selected={selectedBox}
               onSelect={(id) => setSelected(id ? Number(id.slice(2)) : null)}
               onChange={(id, box) => {
                 const i = Number(id.slice(2));
@@ -703,14 +715,26 @@ export function ImageEditor({ hash, name, initialOps, regions, maxSide, title, s
                 setOps((cur) => cur.map((o) => ("area" in o && "box" in o.area && o.area.box.join() === prev.join() ? ({ ...o, area: { box } } as ImageOp) : o)));
               }}
               onCreate={(box) => {
-                setOps((cur) => [...cur, defaultOp("crop", { box }) as ImageOp]);
-                setSelected(ops.length);
+                // Drawing sets an area rather than stacking crops (which would keep only their overlap): the selected
+                // step's drawn area, else the latest crop's; steps sharing that area move with it. With no crop yet,
+                // the drawn box becomes one. More crops are added on purpose with Add edit.
+                const hasDrawnBox = (o: ImageOp | undefined) => !!o && "area" in o && "box" in o.area;
+                const target = selected != null && hasDrawnBox(ops[selected]) ? selected : ops.map((o, i) => (o.kind === "crop" && hasDrawnBox(o) ? i : -1)).filter((i) => i >= 0).pop();
+                if (target == null) {
+                  setOps((cur) => [...cur, defaultOp("crop", { box }) as ImageOp]);
+                  setSelected(ops.length);
+                  return;
+                }
+                const prev = (ops[target] as Extract<ImageOp, { area: Area }>).area as { box: Box };
+                const same = prev.box.join();
+                setOps((cur) => cur.map((o) => ("area" in o && "box" in o.area && o.area.box.join() === same ? ({ ...o, area: { box } } as ImageOp) : o)));
+                setSelected(target);
               }}
             />
           ) : (
             <div className="flex aspect-[16/10] items-center justify-center rounded-lg border border-dashed border-line-strong">{rgb === null ? <span className="text-[12.5px] text-muted">This image is not stored in this browser.</span> : <Spinner />}</div>
           )}
-          <p className="text-[11.5px] text-muted">Drag on the image to crop to a new area. Drag a box to move it, its corners to resize it; arrow keys nudge it.</p>
+          <p className="text-[11.5px] text-muted">Drag on the image to redraw the selected step's area (or the crop's). Drag a box to move it, its corners to resize it; arrow keys nudge it.</p>
         </div>
         <div className="min-w-0 space-y-3">
           {ops.length === 0 ? (
