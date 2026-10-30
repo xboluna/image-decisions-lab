@@ -88,7 +88,7 @@ test("histogram brush, confusion cell and outcome filters narrow the images", as
   // row "1", column "not 1": the false negatives
   await panel.locator('svg[data-chart="confusion_matrix"] g.cursor-pointer').nth(1).click();
   await expect(panel.getByText(/actual 1 → predicted not 1/)).toBeVisible();
-  await expect(panel.locator("text=✕ FN")).toHaveCount(await panel.locator("button:has(img)").count());
+  await expect(panel.locator("text=✕ FN")).toHaveCount(await panel.locator("[data-grid-scroll] button:has(img)").count());
   await panel.getByRole("button", { name: "Clear all" }).click();
 
   await panel.getByRole("button", { name: /^Filters/ }).click();
@@ -101,7 +101,7 @@ test("histogram brush, confusion cell and outcome filters narrow the images", as
 
 test("image detail shows the raw answer and can add a training image as an example", async ({ page }) => {
   await open(page);
-  await train(page).locator("button:has(img)").first().click();
+  await train(page).locator("[data-grid-scroll] button:has(img)").first().click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByText("Model answer")).toBeVisible();
   await dialog.getByRole("button", { name: /Show raw response/ }).click();
@@ -278,7 +278,7 @@ test("metric tiles explain themselves on hover and keyboard focus", async ({ pag
 
 test("test-set images cannot become reference examples", async ({ page }) => {
   await open(page);
-  await testPanel(page).locator("button:has(img)").first().click();
+  await testPanel(page).locator("[data-grid-scroll] button:has(img)").first().click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByText("Model answer")).toBeVisible();
   await expect(dialog.getByText("Use as a reference example")).toHaveCount(0);
@@ -386,4 +386,170 @@ test("large datasets page inside the scrolling grid", async ({ page }) => {
   const box = await panel.locator("[data-grid-scroll]").evaluate((el) => ({ scrolls: el.scrollHeight > el.clientHeight, h: el.clientHeight }));
   expect(box.scrolls).toBe(true);
   expect(box.h).toBeLessThanOrEqual(page.viewportSize()!.height * 0.7 + 1);
+});
+
+/** Edits the stored runs in the page's IndexedDB (keys are stored separately from the records). */
+async function editRuns(page: Page, edit: "plantPartial" | "dropCompleteV1") {
+  await page.evaluate(
+    (edit) =>
+      new Promise<void>((resolve, reject) => {
+        const open = indexedDB.open("harness-studio-runs");
+        open.onerror = () => reject(open.error);
+        open.onsuccess = () => {
+          const tx = open.result.transaction("runs", "readwrite");
+          tx.oncomplete = () => resolve();
+          tx.onerror = tx.onabort = () => reject(tx.error);
+          const store = tx.objectStore("runs");
+          const all = store.getAll();
+          all.onsuccess = () => {
+            type R = { id: string; role: string; promptId: string; startedAt: string; status: string; results: Record<string, string> };
+            const runs = all.result as R[];
+            const v1 = runs.filter((r) => r.promptId === "pr_demo_50ml_v1" && r.role === "train");
+            if (edit === "plantPartial") {
+              // A cancelled re-run of v1, newer than its complete run, that finished only 13 images.
+              const base = v1[0];
+              const half = Object.fromEntries(Object.entries(base.results).slice(0, 13));
+              const run = { ...base, id: "run_partial", status: "cancelled", startedAt: new Date(Date.parse(base.startedAt) + 1000).toISOString(), results: half };
+              store.put(run, run.id);
+            } else {
+              for (const r of v1) if (r.id !== "run_partial") store.delete(r.id);
+            }
+          };
+        };
+      }),
+    edit,
+  );
+}
+
+test("what changed lists images that flipped since the previous prompt version", async ({ page }) => {
+  await open(page);
+  const card = train(page).locator("[data-changes]");
+  await expect(card).toContainText("Balanced accuracy");
+  await expect(train(page).getByText(/^vs 50 ml tubes v1 · [0-9a-f]{8}$/)).toBeVisible();
+  // the holdout has no regressions, so it opens on the fixes
+  await expect(testPanel(page).getByRole("radio", { name: /Fixed \d+/ })).toHaveAttribute("aria-checked", "true");
+  const broke = Number((await train(page).getByRole("radio", { name: /Broke \d+/ }).innerText()).match(/\d+/)![0]);
+  expect(broke).toBeGreaterThan(0);
+  await card.getByRole("button", { name: "Show in grid" }).click();
+  await expect(train(page).getByText(new RegExp(`broke since [0-9a-f]{8} \\(${broke}\\)`))).toBeVisible();
+  await expect(train(page).locator("[data-grid-scroll] button:has(img)")).toHaveCount(broke);
+  await card.locator("ul button").first().click();
+  await expect(page.getByRole("dialog").getByText(`1 of ${broke} broke`)).toBeVisible();
+});
+
+test("what changed ignores a newer partial run and compares on the same images", async ({ page }) => {
+  await open(page);
+  const bar = train(page).locator("[data-comparison]");
+  const card = train(page).locator("[data-changes]");
+  const headline = () => card.locator("div").first().innerText();
+  const before = await headline();
+
+  await editRuns(page, "plantPartial");
+  await page.reload();
+  await expect(card).toContainText("Balanced accuracy");
+  expect(await headline()).toBe(before);
+  await expect(bar).not.toContainText("partial run");
+  await expect(bar).not.toContainText("scored in both");
+
+  // With the complete run gone, the partial one is offered, labelled, and compared on the shared images only.
+  await editRuns(page, "dropCompleteV1");
+  await page.reload();
+  await expect(train(page).getByText(/^vs 50 ml tubes v1 · [0-9a-f]{8} · partial run$/)).toBeVisible();
+  await expect(card).toContainText("on the 13 of 27 images scored in both");
+  await expect(bar).toContainText("Deltas use the 13 of 27 images scored in both versions.");
+});
+
+test("the comparison bar names the baseline, and peeking shows that version until switching back", async ({ page }) => {
+  await open(page);
+  const bar = train(page).locator("[data-comparison]");
+  await expect(bar).toContainText("Comparing against");
+  await expect(bar.getByRole("combobox", { name: "Version to compare against" })).toContainText(/50 ml tubes v1 · [0-9a-f]{8}/);
+  const workingBa = await train(page).locator("text=Balanced accuracy").first().locator("..").locator("..").innerText();
+  await expect(train(page).locator("text=Balanced accuracy").first().locator("..").locator("..")).toContainText("▲");
+
+  await bar.getByRole("button", { name: "See this prompt" }).click();
+  await expect(bar).toContainText("Viewing");
+  await expect(bar).toContainText("compared against your working version");
+  await expect(page.locator("[data-peek-banner]")).toContainText("read-only");
+  await expect(page.getByLabel("Question")).toHaveValue("How many 50 ml tubes are in the photo?");
+  await expect(page.getByLabel("Question")).toBeDisabled();
+  await expect(train(page).getByRole("button", { name: "Score training set" })).toBeDisabled();
+  await expect(train(page).locator("text=Balanced accuracy").first().locator("..").locator("..")).toContainText("▼");
+  await expect(page.locator("nav[aria-label=Experiment] > div").nth(1)).toContainText("51755a05");
+
+  await page.locator("[data-peek-banner]").getByRole("button", { name: "Switch back" }).click();
+  await expect(bar).toContainText("Comparing against");
+  await expect(page.getByLabel("Question")).toBeEnabled();
+  await expect(page.getByLabel("Question")).toHaveValue(/Count each wide tube/);
+  expect(await train(page).locator("text=Balanced accuracy").first().locator("..").locator("..").innerText()).toBe(workingBa);
+});
+
+test("peeking shows the same complete run the comparison uses, even after a cancelled re-run", async ({ page }) => {
+  await open(page);
+  await editRuns(page, "plantPartial");
+  await page.reload();
+  const card = train(page).locator("[data-changes]");
+  await expect(card).toContainText("Balanced accuracy");
+  const baselineBa = (await card.innerText()).match(/Balanced accuracy\s+([\d.]+%)/)![1];
+  await train(page).locator("[data-comparison]").getByRole("button", { name: "See this prompt" }).click();
+  const tiles = train(page).locator("text=Balanced accuracy").first().locator("..").locator("..");
+  await expect(tiles).toContainText(baselineBa);
+  await expect(tiles).toContainText("27 scored");
+  await expect(train(page).locator("[data-comparison]")).not.toContainText("scored in both");
+});
+
+test("nothing edits the working prompt while an earlier version is on screen", async ({ page }) => {
+  await open(page);
+  const promptStep = page.locator("nav[aria-label=Experiment] > div").nth(1);
+  const workingHash = (await promptStep.innerText()).match(/[0-9a-f]{8}/)![0];
+  const examples = page.locator('[data-panel="prompt"] ol > li');
+  await train(page).locator("[data-comparison]").getByRole("button", { name: "See this prompt" }).click();
+  await expect(page.locator("[data-peek-banner]")).toBeVisible();
+
+  // dropping an image onto the reference examples does nothing
+  const zone = page.locator('[data-panel="prompt"]').getByText("Reference examples").locator("..").locator("..");
+  const bytes = readFileSync(path.join(process.cwd(), "public/demo/train/images/scene0_frame112.jpg")).toString("base64");
+  const dt = await page.evaluateHandle((b64) => {
+    const data = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    const t = new DataTransfer();
+    t.items.add(new File([data], "dropped.jpg", { type: "image/jpeg" }));
+    return t;
+  }, bytes);
+  await zone.dispatchEvent("dragover", { dataTransfer: dt });
+  await zone.dispatchEvent("drop", { dataTransfer: dt });
+  await page.waitForTimeout(500);
+  await expect(examples).toHaveCount(0);
+
+  // the image viewer does not offer to add examples
+  await train(page).locator("[data-grid-scroll] button:has(img)").first().click();
+  await expect(page.getByRole("dialog").getByText("Model answer")).toBeVisible();
+  await expect(page.getByRole("dialog").getByRole("button", { name: /Add to prompt/ })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+
+  await page.locator("[data-peek-banner]").getByRole("button", { name: "Switch back" }).click();
+  await expect(promptStep).toContainText(workingHash);
+  await expect(examples).toHaveCount(3);
+});
+
+test("a file dropped while viewing an earlier version, or outside any drop zone, never leaves the app", async ({ page }) => {
+  await open(page);
+  await train(page).locator("[data-comparison]").getByRole("button", { name: "See this prompt" }).click();
+  await expect(page.locator("[data-peek-banner]")).toBeVisible();
+  const zone = page.locator('[data-panel="prompt"]').getByText("Reference examples").locator("..").locator("..");
+  // Returns whether the browser's default (opening the file) was cancelled for dragover and drop.
+  const dropOn = (target: "zone" | "page") =>
+    (target === "zone" ? zone : page.locator("footer")).evaluate((el) => {
+      const dt = new DataTransfer();
+      dt.items.add(new File(["x"], "stray.jpg", { type: "image/jpeg" }));
+      const fire = (type: string) => {
+        const ev = new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt });
+        el.dispatchEvent(ev);
+        return ev.defaultPrevented;
+      };
+      return [fire("dragover"), fire("drop")];
+    });
+  expect(await dropOn("zone")).toEqual([true, true]);
+  expect(await dropOn("page")).toEqual([true, true]);
+  await expect(page.locator("[data-peek-banner]")).toBeVisible();
+  await expect(page.locator('[data-panel="prompt"] ol > li')).toHaveCount(0);
 });

@@ -5,9 +5,11 @@ A harness is a prompt (system text, a question, and ordered reference images) th
 with class probabilities. Image Decisions Lab scores a harness on a training set, fits a threshold, and checks it on
 a holdout test set, with every step hashed and exportable.
 
-![Import a dataset, score it, find the weak outputs, tune the prompt, re-score](docs/demo.gif)
+![Import a dataset, score it, find the weak outputs, tune the prompt, re-score, see what changed](docs/demo.gif)
 
-<sub>50-second walkthrough of the core loop, recorded on the live app ([MP4](docs/demo.mp4)). Re-record with `scripts/record-demo.mjs`.</sub>
+<sub>One-minute walkthrough of the core loop, recorded on the live app with real model calls ([MP4](docs/demo.mp4)): import a
+dataset, score it, find the weak outputs, turn a miss into a reference example, tune the prompt, re-score, and see image
+by image what the edit fixed and broke. Re-record with `scripts/record-demo.mjs` (instructions at the top of the file).</sub>
 
 Everything runs in the browser: datasets, prompts, runs, cached answers and the API key live in IndexedDB and
 local storage. Model calls go straight from the browser to `openrouter.ai`. There is no server code.
@@ -39,14 +41,19 @@ npm run build      # what Vercel runs
    accuracy; drag it on the histogram to see every number and chart update. For the all-classes view the line is
    a review cutoff that flags low-confidence answers.
 5. **Score the test set.** It always uses the training threshold, never its own.
-6. **Inspect.** Filter images by any label, predicted class, outcome (TP/FP/FN/TN or right/wrong), score range
+6. **Compare versions.** A bar above each set's metrics names the version every comparison is made against:
+   by default the prompt version (and model) scored just before this one, or any earlier one you pick. The metric
+   deltas and the "What changed" card (images that went wrong → right or right → wrong) all use it. Both versions
+   are measured on the images scored in both, and a complete run of a version is preferred over a newer partial
+   one. "See this prompt" shows that version's prompt and results, read-only, until you switch back.
+7. **Inspect.** Filter images by any label, predicted class, outcome (TP/FP/FN/TN or right/wrong), score range
    (drag across the histogram) or confusion-matrix cell; colour borders by label, prediction or outcome. Open an
    image for its probabilities, raw response, cost and cache key, and add hard training cases to the prompt as
    examples (test-set images are never offered). Image grids scroll inside their panel and page through large
    datasets (40, 80 or 160 per page).
-7. **Class groups.** Merge or exclude classes to see whether a coarser label scores better. Scoring only:
+8. **Class groups.** Merge or exclude classes to see whether a coarser label scores better. Scoring only:
    probabilities are summed per group, so no new calls are made.
-8. **Export experiment.** One zip with the prompt (and exact request body), dataset manifests and hashes,
+9. **Export experiment.** One zip with the prompt (and exact request body), dataset manifests and hashes,
    per-image answers (JSONL and CSV), metrics, PR curves, confusion matrix, histogram, and the charts as SVG.
 
 Answers are cached per (prompt hash, model, image hash), so re-scoring is free until something that changes the

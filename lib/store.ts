@@ -27,6 +27,10 @@ type State = {
   mappings: Record<string, ClassMapping>;
   /** One focus ("all classes" or a class) shared by both panels. */
   focus: string;
+  /** The version (prompt hash | model) every comparison is made against; null picks the previous version. */
+  baselineKey: string | null;
+  /** While set, the app shows this earlier version instead of the working prompt (read-only). */
+  peek: { prompt: Prompt; hash: string; model: string } | null;
   /** Threshold overrides, keyed by `${trainRunId}|${focus}`. */
   thresholds: Record<string, number>;
   live: Partial<Record<Role, Live>>;
@@ -53,6 +57,9 @@ type State = {
   setSettings: (patch: Partial<Settings>) => void;
   setMapping: (key: string, mapping: ClassMapping) => void;
   setFocus: (focus: string) => void;
+  setBaseline: (key: string | null) => void;
+  startPeek: (peek: { prompt: Prompt; hash: string; model: string }) => void;
+  endPeek: () => void;
   setThreshold: (trainRunId: string, focus: string, value: number | null) => void;
   startRun: (role: Role) => Promise<void>;
   cancelRun: (role: Role) => void;
@@ -81,8 +88,8 @@ function debounce(key: string, fn: () => void, ms = 300) {
 export const useStore = create<State>((set, get) => {
   const persistUi = () =>
     debounce("ui", () => {
-      const { selection, mappings, focus, thresholds } = get();
-      void db.setMeta("ui", { selection, mappings, focus, thresholds });
+      const { selection, mappings, focus, thresholds, baselineKey } = get();
+      void db.setMeta("ui", { selection, mappings, focus, thresholds, baselineKey });
     });
 
   const rehash = async (prompt: Prompt) => {
@@ -91,6 +98,11 @@ export const useStore = create<State>((set, get) => {
   };
 
   const patchPrompt = (id: string, fn: (p: Prompt) => Prompt) => {
+    // An earlier version is on screen: it is read-only, and the hidden working prompt must not change either.
+    if (get().peek) {
+      get().notify("You are viewing an earlier version. Switch back to edit your working prompt.", "error");
+      return;
+    }
     let updated: Prompt | undefined;
     set((s) => ({
       prompts: s.prompts.map((p) => {
@@ -118,6 +130,8 @@ export const useStore = create<State>((set, get) => {
     mappings: {},
     focus: ALL,
     thresholds: {},
+    baselineKey: null,
+    peek: null,
     live: {},
     runErrors: {},
     toast: null,
@@ -129,7 +143,7 @@ export const useStore = create<State>((set, get) => {
         db.listDatasets(),
         db.listPrompts(),
         db.listRuns(),
-        db.getMeta<Pick<State, "selection" | "mappings" | "focus" | "thresholds">>("ui"),
+        db.getMeta<Pick<State, "selection" | "mappings" | "focus" | "thresholds" | "baselineKey">>("ui"),
       ]);
       datasets.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
       prompts.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
@@ -151,6 +165,8 @@ export const useStore = create<State>((set, get) => {
         mappings: ui?.mappings ?? {},
         focus: ui?.focus ?? ALL,
         thresholds: ui?.thresholds ?? {},
+        baselineKey: ui?.baselineKey ?? null,
+        peek: null,
       });
       await Promise.all(prompts.map(rehash));
       await get().loadInferences(runs.flatMap((r) => Object.values(r.results)));
@@ -237,7 +253,7 @@ export const useStore = create<State>((set, get) => {
       persistUi();
     },
     selectPrompt(id) {
-      set((s) => ({ selection: { ...s.selection, prompt: id }, focus: ALL }));
+      set((s) => ({ selection: { ...s.selection, prompt: id }, focus: ALL, peek: null, baselineKey: null }));
       persistUi();
     },
     setTarget(schema) {
@@ -292,6 +308,16 @@ export const useStore = create<State>((set, get) => {
       set({ focus });
       persistUi();
     },
+    setBaseline(key) {
+      set({ baselineKey: key });
+      persistUi();
+    },
+    startPeek(peek) {
+      set({ peek });
+    },
+    endPeek() {
+      set({ peek: null });
+    },
     setThreshold(trainRunId, focus, value) {
       set((s) => {
         const thresholds = { ...s.thresholds };
@@ -329,6 +355,7 @@ export const useStore = create<State>((set, get) => {
         startedAt: new Date().toISOString(),
         status: "running",
         results: {},
+        promptSnapshot: structuredClone(prompt),
         cachedCount: 0,
         errorCount: 0,
         costUsd: 0,
@@ -427,7 +454,8 @@ export function promptLabel(prompt: Prompt | undefined, hash: string | undefined
 }
 
 /** Reasons a run cannot start: missing pieces, a prompt that does not fit the dataset, or datasets that disagree. */
-export function runBlockers(s: Pick<State, "datasets" | "prompts" | "selection" | "settings" | "live">, role: Role): string[] {
+export function runBlockers(s: Pick<State, "datasets" | "prompts" | "selection" | "settings" | "live" | "peek">, role: Role): string[] {
+  if (s.peek) return ["You are viewing an earlier version. Switch back to your working prompt to score."];
   const dataset = s.datasets.find((d) => d.id === s.selection[role]);
   const prompt = s.prompts.find((p) => p.id === s.selection.prompt);
   if (!dataset) return [`Pick or upload a ${role === "train" ? "training" : "test"} dataset.`];

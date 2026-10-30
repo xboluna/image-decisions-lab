@@ -2,15 +2,18 @@
 import { Layers, RotateCcw } from "lucide-react";
 import { useState } from "react";
 import type { Analysis, ThresholdInfo } from "@/lib/analysis";
-import { ALL, groupsFor, type Metrics, type Target } from "@/lib/metrics";
+import { ALL, groupsFor, type Target } from "@/lib/metrics";
 import { useStore } from "@/lib/store";
 import type { ClassMapping } from "@/lib/types";
 import { ChartCard, ConfusionChart, Histogram, LegendKey, PrChart } from "./charts";
+import { ChangesCard } from "./Changes";
 import { ClassGroups } from "./ClassGroups";
 import { classColor, classLabel } from "./colors";
 import { Button, cx, fmtPct, InfoTip, Popover } from "./ui";
 
 export type ChartFilters = {
+  /** A fixed set of images, e.g. the ones that changed outcome since the last version. */
+  ids: { label: string; ids: string[] } | null;
   span: [number, number] | null;
   cell: { actual: string; predicted: string } | null;
 };
@@ -25,7 +28,7 @@ function Tile({ label, value, sub, delta, hero, title }: { label: string; value:
       <div className="mt-0.5 flex items-baseline gap-1.5">
         <span className={cx("font-semibold tracking-tight text-ink", hero ? "text-[24px]" : "text-[20px]")}>{value}</span>
         {delta != null && Number.isFinite(delta) && (
-          <span className={cx("text-[11px] font-medium tabular", Math.abs(delta) < 0.0005 ? "text-muted" : delta > 0 ? "text-good-ink" : "text-critical-ink")} title="Change versus the training set">
+          <span className={cx("text-[11px] font-medium tabular", Math.abs(delta) < 0.0005 ? "text-muted" : delta > 0 ? "text-good-ink" : "text-critical-ink")} title="Change versus the version compared against">
             {delta > 0 ? "▲" : delta < 0 ? "▼" : ""} {Math.abs(delta * 100).toFixed(1)} pts
           </span>
         )}
@@ -37,28 +40,34 @@ function Tile({ label, value, sub, delta, hero, title }: { label: string; value:
 
 const BA_HELP = "Balanced accuracy: the mean of per-class recall. For a yes/no label this is (sensitivity + specificity) / 2. Unlike accuracy it does not reward always guessing the common class.";
 
-export function MetricTiles({ a, compare, mapping }: { a: Analysis; compare?: Metrics | null; mapping: ClassMapping }) {
+/** Metric tiles. Deltas compare against the comparison version, both measured on the images scored in both runs. */
+export function MetricTiles({ a, mapping }: { a: Analysis; mapping: ClassMapping }) {
   const m = a.metrics;
-  const d = (v: number | null | undefined, c: number | null | undefined) => (compare && v != null && c != null ? v - c : null);
+  const b = a.baseline;
+  const d = (key: "balancedAccuracy" | "accuracy" | "recall" | "specificity" | "precision" | "coverage" | "accuracyAboveCutoff") => {
+    const after = b?.after[key];
+    const before = b?.before[key];
+    return after != null && before != null ? after - before : null;
+  };
   const scoredSub = [`${m.n} scored`, m.excluded ? `${m.excluded} excluded` : "", m.errors ? `${m.errors} failed` : "", m.pending ? `${m.pending} pending` : ""].filter(Boolean).join(" · ");
   if (a.view.mode === "binary") {
     const c = m.counts!;
     return (
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
-        <Tile hero label="Balanced accuracy" value={fmtPct(m.balancedAccuracy)} delta={d(m.balancedAccuracy, compare?.balancedAccuracy)} sub={scoredSub} title={BA_HELP} />
-        <Tile label="Accuracy" value={fmtPct(m.accuracy)} delta={d(m.accuracy, compare?.accuracy)} sub={`${c.TP + c.TN} of ${m.n} right`} title="The share of scored images called correctly at the current threshold. Can look good on unbalanced data just by guessing the common answer." />
-        <Tile label="Recall" value={fmtPct(m.recall)} delta={d(m.recall, compare?.recall)} sub={`${c.TP} TP · ${c.FN} FN`} title="Sensitivity: the share of actual positives called positive." />
-        <Tile label="Specificity" value={fmtPct(m.specificity)} delta={d(m.specificity, compare?.specificity)} sub={`${c.TN} TN · ${c.FP} FP`} title="The share of actual negatives called negative." />
-        <Tile label="Precision" value={fmtPct(m.precision)} delta={d(m.precision, compare?.precision)} sub={m.f1 != null ? `F1 ${m.f1.toFixed(3)}` : undefined} title="The share of positive calls that were right." />
+        <Tile hero label="Balanced accuracy" value={fmtPct(m.balancedAccuracy)} delta={d("balancedAccuracy")} sub={scoredSub} title={BA_HELP} />
+        <Tile label="Accuracy" value={fmtPct(m.accuracy)} delta={d("accuracy")} sub={`${c.TP + c.TN} of ${m.n} right`} title="The share of scored images called correctly at the current threshold. Can look good on unbalanced data just by guessing the common answer." />
+        <Tile label="Recall" value={fmtPct(m.recall)} delta={d("recall")} sub={`${c.TP} TP · ${c.FN} FN`} title="Sensitivity: the share of actual positives called positive." />
+        <Tile label="Specificity" value={fmtPct(m.specificity)} delta={d("specificity")} sub={`${c.TN} TN · ${c.FP} FP`} title="The share of actual negatives called negative." />
+        <Tile label="Precision" value={fmtPct(m.precision)} delta={d("precision")} sub={m.f1 != null ? `F1 ${m.f1.toFixed(3)}` : undefined} title="The share of positive calls that were right." />
       </div>
     );
   }
   return (
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
-      <Tile hero label="Balanced accuracy" value={fmtPct(m.balancedAccuracy)} delta={d(m.balancedAccuracy, compare?.balancedAccuracy)} sub={scoredSub} title={BA_HELP} />
-      <Tile label="Accuracy" value={fmtPct(m.accuracy)} delta={d(m.accuracy, compare?.accuracy)} sub={`${m.perClass.reduce((s, p) => s + p.tp, 0)} of ${m.n} right`} title="The share of scored images whose most likely class matches the label. Can look good on unbalanced data just by guessing the common class." />
-      <Tile label="Above review cutoff" value={fmtPct(m.coverage)} delta={d(m.coverage, compare?.coverage)} sub="share of answers kept" title="The share of answers whose top-class probability is at or above the review cutoff (the line on the histogram). Answers below it are flagged for review." />
-      <Tile label="Accuracy above cutoff" value={fmtPct(m.accuracyAboveCutoff)} delta={d(m.accuracyAboveCutoff, compare?.accuracyAboveCutoff)} sub="on kept answers" title="Accuracy on only the answers at or above the review cutoff: how right the model is when it is confident enough to trust without review." />
+      <Tile hero label="Balanced accuracy" value={fmtPct(m.balancedAccuracy)} delta={d("balancedAccuracy")} sub={scoredSub} title={BA_HELP} />
+      <Tile label="Accuracy" value={fmtPct(m.accuracy)} delta={d("accuracy")} sub={`${m.perClass.reduce((s, p) => s + p.tp, 0)} of ${m.n} right`} title="The share of scored images whose most likely class matches the label. Can look good on unbalanced data just by guessing the common class." />
+      <Tile label="Above review cutoff" value={fmtPct(m.coverage)} delta={d("coverage")} sub="share of answers kept" title="The share of answers whose top-class probability is at or above the review cutoff (the line on the histogram). Answers below it are flagged for review." />
+      <Tile label="Accuracy above cutoff" value={fmtPct(m.accuracyAboveCutoff)} delta={d("accuracyAboveCutoff")} sub="on kept answers" title="Accuracy on only the answers at or above the review cutoff: how right the model is when it is confident enough to trust without review." />
       <div className="col-span-2 min-w-0 rounded-xl border border-line bg-surface-2 px-3 py-2 sm:col-span-1">
         <div className="text-[11.5px] font-medium text-ink-2">Recall per class</div>
         <div className="mt-1 space-y-1">
@@ -164,7 +173,7 @@ export function ChartsRow({ a, role, threshold, focus, mapping, filters, setFilt
   const colors = binary ? [posColor, seriesColor.neg] : a.confusion.labels.map((g) => classColor(a.target, mapping, g));
 
   return (
-    <div className={cx("grid gap-2.5", wide ? "lg:grid-cols-[1.25fr_1fr_0.9fr]" : "lg:grid-cols-2 2xl:grid-cols-[1.25fr_1fr_0.9fr]")}>
+    <div className={cx("grid gap-2.5 lg:grid-cols-2", wide && "2xl:grid-cols-4")}>
       <ChartCard
         title="Confidence distribution"
         subtitle={canSet ? "Drag the line to move the threshold · drag across bars to filter" : "Drag across bars to filter images"}
@@ -204,7 +213,7 @@ export function ChartsRow({ a, role, threshold, focus, mapping, filters, setFilt
           }
         />
       </ChartCard>
-      <ChartCard className={cx(!wide && "lg:col-span-2 2xl:col-span-1")} title="Confusion matrix" subtitle="Rows: actual · columns: predicted · click a cell to filter">
+      <ChartCard title="Confusion matrix" subtitle="Rows: actual · columns: predicted · click a cell to filter">
         <ConfusionChart
           role={role}
           labels={a.confusion.labels.map((l) => (a.target.type === "boolean" ? l : classLabel(a.target, l)))}
@@ -215,6 +224,7 @@ export function ChartsRow({ a, role, threshold, focus, mapping, filters, setFilt
           onSelect={(cell) => setFilters({ cell })}
         />
       </ChartCard>
+      <ChangesCard a={a} mapping={mapping} setFilters={setFilters} />
     </div>
   );
 }

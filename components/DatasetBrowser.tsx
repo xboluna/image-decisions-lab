@@ -55,7 +55,7 @@ export type Filters = ChartFilters & {
   search: string;
 };
 
-export const emptyFilters: Filters = { labels: {}, predicted: [], outcomes: [], status: [], search: "", span: null, cell: null };
+export const emptyFilters: Filters = { labels: {}, predicted: [], outcomes: [], status: [], search: "", span: null, cell: null, ids: null };
 
 function labelValueKey(v: DatasetItem["labels"][string]): string {
   return v == null ? "(missing)" : String(v);
@@ -65,6 +65,7 @@ export function applyFilters(items: DatasetItem[], f: Filters, a: Analysis | nul
   const q = f.search.trim().toLowerCase();
   return items.filter((item) => {
     if (q && !item.fileName.toLowerCase().includes(q)) return false;
+    if (f.ids && !f.ids.ids.includes(item.id)) return false;
     for (const [key, vals] of Object.entries(f.labels)) if (vals.length && !vals.includes(labelValueKey(item.labels[key]))) return false;
     if (!a) return true;
     const row = a.rowById.get(item.id);
@@ -156,6 +157,7 @@ export function DatasetBrowser({ dataset, analysis, target, targetKey, mapping, 
   };
 
   const active: { key: string; label: string; clear: () => void }[] = [];
+  if (filters.ids) active.push({ key: "ids", label: filters.ids.label, clear: () => setFilters({ ids: null }) });
   if (filters.search) active.push({ key: "search", label: `“${filters.search}”`, clear: () => setFilters({ search: "" }) });
   for (const [k, vals] of Object.entries(filters.labels)) if (vals.length) active.push({ key: `l:${k}`, label: `${k}: ${vals.join(", ")}`, clear: () => setFilters({ labels: { ...filters.labels, [k]: [] } }) });
   if (filters.predicted.length) active.push({ key: "pred", label: `predicted: ${filters.predicted.map((p) => classLabel(target, p)).join(", ")}`, clear: () => setFilters({ predicted: [] }) });

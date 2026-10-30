@@ -60,6 +60,19 @@ export function Studio() {
   useEffect(() => {
     void hydrate();
   }, [hydrate]);
+  // A file dropped anywhere outside a drop zone must not make the browser open it and leave the app (and lose
+  // in-memory state such as an earlier version being viewed). Drop zones handle their own drops first.
+  useEffect(() => {
+    const swallow = (e: DragEvent) => {
+      if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
+    };
+    window.addEventListener("dragover", swallow);
+    window.addEventListener("drop", swallow);
+    return () => {
+      window.removeEventListener("dragover", swallow);
+      window.removeEventListener("drop", swallow);
+    };
+  }, []);
   return (
     <>
       <Header />

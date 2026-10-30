@@ -10,6 +10,7 @@ import { inferenceKey } from "@/lib/prompt";
 import { datasetMismatch, runBlockers, useStore, type Role } from "@/lib/store";
 import type { Dataset } from "@/lib/types";
 import { DatasetBrowser, emptyFilters, type ColorBy, type Filters } from "./DatasetBrowser";
+import { ComparisonBar } from "./ComparisonBar";
 import { ChartsRow, MetricTiles, ViewControls } from "./Results";
 import { UploadDialog } from "./UploadDialog";
 import { Button, Card, cx, Field, fmtPct, fmtUsd, HashChip, inputClass, MenuItem, Modal, Popover, ProgressBar, timeAgo } from "./ui";
@@ -145,7 +146,7 @@ function RunHistory({ dataset, role }: { dataset: Dataset; role: Role }) {
       });
       let threshold = view.mode === "binary" ? 0.5 : 0;
       if (view.mode === "binary") {
-        const trainRun = role === "train" ? r : pickRun(runs.filter((x) => x.role === "train" && x.promptHash === r.promptHash && x.model === r.model), trainDs, { targetKey: r.targetKey }, r.promptHash, r.model)?.run;
+        const trainRun = role === "train" ? r : pickRun(runs.filter((x) => x.role === "train" && x.promptHash === r.promptHash && x.model === r.model), trainDs, { targetKey: r.targetKey }, r.promptHash, r.model, inferences)?.run;
         if (trainRun && trainDs) {
           const trainInputs = trainDs.items.map((i) => {
             const inf = inferences[trainRun.results[i.id]];
@@ -257,6 +258,7 @@ export function DatasetPanel({ role, fillHeight }: { role: Role; fillHeight?: nu
   const deleteDataset = useStore((s) => s.deleteDataset);
   const promptHashes = useStore((s) => s.promptHashes);
   const blockers = useStore(useShallow((s) => runBlockers(s, role)));
+  const peeking = useStore((s) => !!s.peek);
   const mismatch = useStore(
     useShallow((s) => {
       const m = datasetMismatch(s);
@@ -397,7 +399,7 @@ export function DatasetPanel({ role, fillHeight }: { role: Role; fillHeight?: nu
                 </Button>
                 <div className="min-w-0 flex-1 text-[12px] text-ink-2">
                   {blockers.length ? (
-                    <span className="inline-flex items-start gap-1.5 text-critical-ink">
+                    <span className={cx("inline-flex items-start gap-1.5", peeking ? "text-ink-2" : "text-critical-ink")}>
                       <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
                       {blockers[0]}
                     </span>
@@ -448,7 +450,8 @@ export function DatasetPanel({ role, fillHeight }: { role: Role; fillHeight?: nu
 
           {analysis && target && (
             <div className="mt-4 space-y-3">
-              <MetricTiles a={analysis} compare={role === "test" ? exp.train?.metrics : null} mapping={exp.mapping} />
+              <ComparisonBar comparison={exp.comparison} a={analysis} />
+              <MetricTiles a={analysis} mapping={exp.mapping} />
               <ViewControls role={role} target={target} mapping={exp.mapping} focus={exp.focus} threshold={exp.threshold} a={analysis} />
               <ChartsRow a={analysis} role={role} threshold={exp.threshold} focus={exp.focus} mapping={exp.mapping} filters={filters} setFilters={setFilters} wide={wide} />
             </div>

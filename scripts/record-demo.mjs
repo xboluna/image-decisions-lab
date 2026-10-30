@@ -1,5 +1,5 @@
 // Records the demo video (docs/demo.mp4, docs/demo.gif) through the real app: import a dataset, score it, find
-// weak outputs, tune the prompt, re-score. Makes about 55 live model calls (well under a cent).
+// weak outputs, tune the prompt, re-score, and see image by image what the change fixed or broke. Makes about 55 live model calls (well under a cent).
 //
 //   npm run build && npx next start -p 3100
 //   OPENROUTER_API_KEY=sk-or-... node scripts/record-demo.mjs        # prints the recorded .webm
@@ -107,7 +107,7 @@ async function typeInto(locator, text, delay = 14) { await click(locator); await
 await page.goto(BASE, { waitUntil: "networkidle" });
 await page.waitForSelector("text=Add a training dataset");
 await page.mouse.move(mouse.x, mouse.y);
-await card("Image Decisions Lab", "Tune an image classifier on a decision model, in your browser.", ["Import", "Score", "Inspect", "Tune", "Re-score"]);
+await card("Image Decisions Lab", "Tune an image classifier on a decision model, in your browser.", ["Import", "Score", "Inspect", "Tune", "Re-score", "Compare"]);
 await wait(2600);
 await hideCard();
 await wait(500);
@@ -187,21 +187,35 @@ await ring(nav);
 await wait(1500);
 await unring();
 
-// 6 · re-score
-await caption(6, "Re-score and compare");
+// 6 · re-score, then see image by image what the change did
+await caption(6, "Re-score");
 await click(train.getByRole("button", { name: "Score training set" }));
 await train.getByRole("button", { name: "Stop" }).waitFor({ state: "detached", timeout: 120000 });
 await wait(500);
 await moveTo(tiles);
 await ring(tiles);
-await wait(1800);
+await wait(1500);
 await unring();
-await click(train.getByRole("button", { name: /^History/ }));
-await wait(2800);
+await caption(7, "See what changed", "every image that was fixed or broke by the edit");
+const changes = train.locator("[data-changes]").locator("..").locator("..");
+await changes.scrollIntoViewIfNeeded();
+await wait(400);
+await moveTo(changes);
+await ring(changes);
+await wait(1600);
+await unring();
+await click(train.getByRole("radio", { name: /Fixed \d+/ }));
+await wait(1200);
+await click(train.locator("[data-changes] ul button").first());
+await page.getByRole("dialog").getByText("Model answer").waitFor();
+await wait(2000);
 await page.keyboard.press("Escape");
+await wait(300);
+await click(train.getByRole("radio", { name: /Broke \d+/ }));
+await wait(1500);
 await page.evaluate(() => document.getElementById("demo-cap").classList.remove("on"));
 
-await card("Image Decisions Lab", "Every dataset, prompt and answer is hashed and exportable.", ["Import", "Score", "Inspect", "Tune", "Re-score"]);
+await card("Image Decisions Lab", "Every dataset, prompt and answer is hashed and exportable.", ["Import", "Score", "Inspect", "Tune", "Re-score", "Compare"]);
 await wait(2600);
 const video = page.video();
 await ctx.close();
