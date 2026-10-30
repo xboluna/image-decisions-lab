@@ -754,3 +754,23 @@ test("the export's cross-validated delta matches the tile in a one-vs-rest view"
   expect(typeof d).toBe("number");
   if (shown) expect(Math.abs(d * 100).toFixed(1)).toBe(shown[2]);
 });
+
+test("a named training folder plus an unnamed one makes the unnamed one the test set", async ({ page }) => {
+  await open(page);
+  const dir = path.join(process.cwd(), "public/demo/test");
+  const lines = readFileSync(path.join(dir, "metadata.jsonl"), "utf8").trim().split("\n").slice(0, 3);
+  const zip = new JSZip();
+  for (const folder of ["train", "batch_7"]) {
+    zip.file(`exp/${folder}/metadata.jsonl`, lines.join("\n"));
+    zip.file(`exp/${folder}/dataset.json`, readFileSync(path.join(dir, "dataset.json")));
+    for (const l of lines.map((x) => JSON.parse(x))) zip.file(`exp/${folder}/${l.file_name}`, readFileSync(path.join(dir, l.file_name)));
+  }
+  const out = path.join(mkdtempSync(path.join(tmpdir(), "hs-")), "roles.zip");
+  writeFileSync(out, await zip.generateAsync({ type: "nodebuffer" }));
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  await page.getByRole("button", { name: "Import experiment…" }).click();
+  await page.getByRole("dialog").getByLabel("Experiment zip").setInputFiles(out);
+  const plan = page.getByRole("dialog").locator("[data-bundle-plan] li");
+  await expect(plan.filter({ hasText: "exp/train/" }).getByRole("radio", { name: "Training" })).toHaveAttribute("aria-checked", "true");
+  await expect(plan.filter({ hasText: "exp/batch_7/" }).getByRole("radio", { name: "Test" })).toHaveAttribute("aria-checked", "true");
+});

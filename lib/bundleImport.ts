@@ -118,10 +118,10 @@ export async function scanBundle(input: FileEntry[], onProgress?: (p: ImportProg
     const role = guessRole(root.slice(base.length)) ?? "skip";
     datasets.push({ root, folder: root.slice(base.length) || "./", files: own, name: card?.name ?? folder, role, rows: parsed.rows.length, imagesFound, exportedHash: card?.hash ? stripSha(card.hash) : undefined });
   }
-  // Unnamed single dataset: use it as the training set. Two unnamed: first train, second test.
-  const unassigned = datasets.filter((d) => d.role === "skip");
-  if (!datasets.some((d) => d.role === "train") && unassigned[0]) unassigned[0].role = "train";
-  if (!datasets.some((d) => d.role === "test") && unassigned[1]) unassigned[1].role = "test";
+  // Roles no folder name claimed go to the unnamed datasets, in order: training first, then test.
+  const unassigned = datasets.filter((d) => d.role === "skip" && d.imagesFound > 0);
+  if (!datasets.some((d) => d.role === "train") && unassigned.length) unassigned.shift()!.role = "train";
+  if (!datasets.some((d) => d.role === "test") && unassigned.length) unassigned.shift()!.role = "test";
   const order = { train: 0, test: 1, skip: 2 };
   datasets.sort((a, b) => order[a.role] - order[b.role]);
   for (const d of datasets) {
