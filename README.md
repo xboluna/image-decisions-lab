@@ -26,6 +26,32 @@ local storage. Model calls go straight from the browser to `openrouter.ai`. Ther
 8. **Export experiment.** Export one zip with the prompt (and exact request body), dataset manifests and hashes,
    per-image answers (JSONL and CSV), metrics, PR curves, confusion matrix, histogram, and the charts as SVG.
 
+## Pixel parity
+
+A decision model's answer on a borderline image can flip after a one-level pixel change, so the browser sends
+exactly the JPEG a Python/Pillow harness would send, byte for byte. The canonical pipeline:
+
+```python
+img = Image.open(path).convert("RGB")     # no EXIF rotation, no colour management, alpha dropped
+img.thumbnail((max_side, max_side))       # BICUBIC, reducing_gap=2.0; never upscales
+img.save(buf, "JPEG", quality=85)         # baseline, 4:2:0, standard tables, no optimize
+```
+
+`scripts/reference_pipeline.py` is that pipeline (`uv run scripts/reference_pipeline.py --max-side 1024 --out sent/
+images/*.jpg`); its docstring explains each choice. In the browser, `lib/modelImage.ts` decodes JPEG with libjpeg
+compiled to WebAssembly (`@jsquash/jpeg`, loaded on first use), PNG with `fast-png` and uncompressed BMP directly,
+then ports Pillow's resize (`lib/pillow.ts`) and libjpeg-turbo's encoder (`lib/jpegEncoder.ts`). Thumbnails in the
+UI still use the canvas; they are never sent.
+
+`node scripts/check_parity.mjs` (Node 22.18+, uv) runs both pipelines on every demo image and on generated edge
+cases (6000×4000 and 4200×3150 photos, odd sizes, progressive, 4:2:2 and 4:4:4 JPEG, greyscale, RGBA, palette,
+1-, 2- and 16-bit PNG, interlaced PNG, BMP, thin strips, a JPEG comment, an EXIF-rotated JPEG) at 512, 1024 and
+1280 px, and fails on any byte difference. `e2e/parity.spec.ts` checks the request bodies in Chromium and WebKit.
+WebP, GIF, CMYK JPEG and compressed or paletted BMP fall back to the browser's decoder: they are resized and encoded
+the same way, but their decoded pixels may differ from Pillow's, and an experiment export marks them
+`pixel_exact: false`. The export's `prompt/sent/` holds the exact JPEG sent for each reference example, and
+`prompt.json` lists their sha256.
+
 ## Dataset format
 
 ```

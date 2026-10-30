@@ -2,8 +2,14 @@ import { sha256Json } from "./hash";
 import type { ContentPart, LabelSchema, Prompt, PromptExample } from "./types";
 
 /** Bumped whenever the way a prompt becomes a request changes, so old cached answers are never reused. */
-export const STATE_TEMPLATE_VERSION = 1;
-export const JPEG_QUALITY = 0.85;
+export const STATE_TEMPLATE_VERSION = 2;
+/** Pillow's quality scale (1-100). */
+export const JPEG_QUALITY = 85;
+/**
+ * Names the image pipeline (lib/modelImage.ts, scripts/reference_pipeline.py) in prompt hashes and exports. Change it
+ * whenever the bytes sent for the same image could change.
+ */
+export const IMAGE_PIPELINE = "pillow-thumbnail-bicubic/libjpeg-turbo-q85-420";
 
 export type DecisionQuestion = { type: "noul" | "choice"; instructions: string; criteria: Record<string, string> };
 
@@ -48,6 +54,7 @@ export function promptHash(prompt: Prompt): Promise<string> {
   return sha256Json({
     template: STATE_TEMPLATE_VERSION,
     jpegQuality: JPEG_QUALITY,
+    imagePipeline: IMAGE_PIPELINE,
     imageMaxSide: prompt.imageMaxSide,
     systemPrompt: prompt.systemPrompt.trim(),
     targetKey: prompt.targetKey,
