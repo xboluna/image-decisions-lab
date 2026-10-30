@@ -68,7 +68,7 @@ type State = {
 };
 
 const SETTINGS_KEY = "harness-studio.settings";
-const defaultSettings: Settings = { apiKey: "", model: DEFAULT_MODEL, concurrency: 4 };
+const defaultSettings: Settings = { apiKey: "", model: DEFAULT_MODEL, concurrency: 4, advancedMetrics: false };
 
 function loadSettings(): Settings {
   try {
