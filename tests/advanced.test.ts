@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { auroc, computeAdvanced, crossValidatedBa, foldOf, macroBalancedAccuracy, scoreRows, viewFor, type Row, type Target } from "@/lib/metrics";
+import { auroc, computeAdvanced, crossValidatedBa, macroBalancedAccuracy, mixedHash, scoreRows, stratifiedHalves, viewFor, type Row, type Target } from "@/lib/metrics";
 
 describe("auroc", () => {
   it("is 1 for a perfect ranking, 0.5 for all ties, 0 when reversed", () => {
@@ -24,12 +24,36 @@ describe("auroc", () => {
 describe("cross-validated balanced accuracy", () => {
   const bool: Target = { type: "boolean" };
   const view = viewFor(bool, "__all__");
-  it("splits images into fixed halves", () => {
-    expect(foldOf("a.jpg")).toBe(foldOf("a.jpg"));
-    const ids = Array.from({ length: 200 }, (_, i) => `img${i}.jpg`);
-    const ones = ids.filter((id) => foldOf(id) === 1).length;
-    expect(ones).toBeGreaterThan(70);
-    expect(ones).toBeLessThan(130);
+  it("mixes every bit of the id into the hash", () => {
+    // ids that differ only in characters of equal parity used to land in the same half
+    const highBits = ["a0", "a2", "a4", "a6", "a8", "c0", "c2"].map((id) => mixedHash(id) >>> 31);
+    expect(new Set(highBits).size).toBe(2);
+    expect(mixedHash("x.jpg")).toBe(mixedHash("x.jpg"));
+  });
+  it("splits each class evenly, however images are named", () => {
+    // class-prefixed names: every positive starts with "pos_", every negative with "neg_"
+    const rows = scoreRows(
+      Array.from({ length: 30 }, (_, i) => ({ id: `${i < 12 ? "pos" : "neg"}_${i * 2}.jpg`, gt: i < 12, probabilities: { true: 0.5, false: 0.5 } })),
+      bool,
+      {},
+      view,
+      0.5,
+    );
+    const [a, b] = stratifiedHalves(rows);
+    expect(a.filter((r) => r.gtPositive).length).toBe(6);
+    expect(b.filter((r) => r.gtPositive).length).toBe(6);
+    expect(a.length + b.length).toBe(30);
+    expect(stratifiedHalves(rows)[0].map((r) => r.id)).toEqual(a.map((r) => r.id));
+  });
+  it("cross-validates class-prefixed names instead of giving up", () => {
+    const rows = scoreRows(
+      Array.from({ length: 20 }, (_, i) => ({ id: `${i % 2 ? "neg" : "pos"}_${i}.jpg`, gt: i % 2 === 0, probabilities: { true: i % 2 === 0 ? 0.7 : 0.3, false: 0 } })),
+      bool,
+      {},
+      view,
+      0.5,
+    );
+    expect(crossValidatedBa(rows)).toBe(1);
   });
   it("equals in-sample balanced accuracy on a separable set and drops when the fit overfits", () => {
     const sep = Array.from({ length: 40 }, (_, i) => ({ id: `s${i}`, gt: i % 2 === 0, probabilities: { true: i % 2 === 0 ? 0.8 : 0.2, false: 0 } }));

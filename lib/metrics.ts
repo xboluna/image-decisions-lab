@@ -316,8 +316,9 @@ function round4(x: number): number {
  * the threshold entirely. In the all-classes view it is averaged one-vs-rest over classes with both cases.
  *
  * Cross-validated balanced accuracy: the threshold fitted on one half of the images, applied to the other half,
- * and the other way round (halves fixed by a hash of each image id). It shows how much the fitted threshold
- * flatters the training set. Binary views only, since the all-classes view fits no threshold.
+ * and the other way round. It shows how much the fitted threshold
+ * flatters the training set. The halves are stratified by class (see stratifiedHalves). Binary views only, since
+ * the all-classes view fits no threshold.
  *
  * Macro balanced accuracy: each class scored one-vs-rest (recall and specificity of "predicted this class"),
  * averaged over classes with at least `minPositives` images, so rare classes with a handful of images do not swing it.
@@ -347,14 +348,33 @@ export function auroc(pairs: { score: number; positive: boolean }[]): number | n
   return u / (pos.length * neg.length);
 }
 
-/** FNV-1a: a stable, fast string hash used to split images into two fixed halves. */
-export function foldOf(id: string): 0 | 1 {
+/** A stable, well-mixed 32-bit hash of an id: FNV-1a, then MurmurHash3's finalizer so every bit depends on every character. */
+export function mixedHash(id: string): number {
   let h = 0x811c9dc5;
   for (let i = 0; i < id.length; i++) {
     h ^= id.charCodeAt(i);
     h = Math.imul(h, 0x01000193);
   }
-  return ((h >>> 0) % 2) as 0 | 1;
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35);
+  h ^= h >>> 16;
+  return h >>> 0;
+}
+
+/**
+ * Splits rows into two fixed halves, stratified by class: within positives and within negatives, rows are ordered
+ * by a mixed hash of their id and dealt alternately. Each half gets about half of each class, however the images
+ * are named, and the split never changes for the same images.
+ */
+export function stratifiedHalves(rows: Row[]): [Row[], Row[]] {
+  const halves: [Row[], Row[]] = [[], []];
+  for (const group of [rows.filter((r) => r.gtPositive), rows.filter((r) => !r.gtPositive)]) {
+    const ordered = [...group].sort((x, y) => mixedHash(x.id) - mixedHash(y.id) || (x.id < y.id ? -1 : 1));
+    ordered.forEach((r, i) => halves[i % 2].push(r));
+  }
+  return halves;
 }
 
 function balancedAccuracyAt(rows: Row[], threshold: number): { tp: number; fn: number; tn: number; fp: number } {
@@ -369,7 +389,7 @@ function balancedAccuracyAt(rows: Row[], threshold: number): { tp: number; fn: n
 
 export function crossValidatedBa(rows: Row[]): number | null {
   const scored = rows.filter((r) => r.status === "scored" && r.score != null && r.gtPositive !== undefined);
-  const halves = [scored.filter((r) => foldOf(r.id) === 0), scored.filter((r) => foldOf(r.id) === 1)];
+  const halves = stratifiedHalves(scored);
   const total = { tp: 0, fn: 0, tn: 0, fp: 0 };
   for (const [fit, score] of [
     [halves[0], halves[1]],
