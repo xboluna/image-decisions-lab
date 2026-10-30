@@ -81,8 +81,8 @@ export function BoxStage({ rgb, boxes, selected, onSelect, onChange, onCreate, l
     draftRef.current = b;
     setDraftState(b);
   };
-  const handlers = useRef({ onChange, onCreate });
-  handlers.current = { onChange, onCreate };
+  const handlers = useRef({ onChange, onCreate, onSelect });
+  handlers.current = { onChange, onCreate, onSelect };
   const point = (e: { clientX: number; clientY: number }): [number, number] => {
     const r = wrap.current!.getBoundingClientRect();
     return [Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), Math.min(1, Math.max(0, (e.clientY - r.top) / r.height))];
@@ -115,7 +115,11 @@ export function BoxStage({ rgb, boxes, selected, onSelect, onChange, onCreate, l
     const up = () => {
       const d = draftRef.current;
       const create = handlers.current.onCreate;
-      if (drag.mode === "new" && d && create && d[2] - d[0] > 0.01 && d[3] - d[1] > 0.01) create(d);
+      if (drag.mode === "new") {
+        // A drawn box is applied with the selection intact (it may target the selected step); a plain click clears it.
+        if (d && create && d[2] - d[0] > 0.01 && d[3] - d[1] > 0.01) create(d);
+        else handlers.current.onSelect(null);
+      }
       setDrag(null);
       setDraft(null);
     };
@@ -140,8 +144,8 @@ export function BoxStage({ rgb, boxes, selected, onSelect, onChange, onCreate, l
       style={{ aspectRatio: `${rgb.width} / ${rgb.height}` }}
       onPointerDown={(e) => {
         if (e.button !== 0 || (e.target as HTMLElement).closest("[data-box]")) return;
-        onSelect(null);
-        if (onCreate) {
+        if (!onCreate) onSelect(null);
+        else {
           const p = point(e);
           setDrag({ id: null, mode: "new", start: p, box: [p[0], p[1], p[0], p[1]] });
         }

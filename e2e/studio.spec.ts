@@ -860,3 +860,20 @@ test("drawing in the image editor redraws the crop and keeps its outline on the 
   expect(Number(size[2])).toBeGreaterThan(250);
   await expect(editor.locator("[data-box-stage] [data-box]")).toHaveCount(1); // crop and outline share the one area
 });
+
+test("drawing keeps the selected step; a plain click on the image clears it", async ({ page }) => {
+  await open(page);
+  await train(page).locator("[data-grid-scroll] button:has(img)").first().click();
+  await page.getByRole("dialog").getByRole("button", { name: "Crop & add…" }).click();
+  const editor = page.locator("[data-image-editor]");
+  await editor.getByRole("button", { name: "Add edit" }).click();
+  await page.getByRole("button", { name: /^Spotlight/ }).click();
+  const spotlight = editor.locator("[data-op='spotlight']");
+  await spotlight.click({ position: { x: 60, y: 10 } });
+  await expect(spotlight).toHaveClass(/border-accent/);
+  await drawOnStage(page, [0.05, 0.05], [0.3, 0.4]);
+  await expect(spotlight).toHaveClass(/border-accent/); // still the step being edited
+  const bb = (await editor.locator("[data-box-stage]").boundingBox())!;
+  await page.mouse.click(bb.x + bb.width * 0.9, bb.y + bb.height * 0.9);
+  await expect(editor.locator("[data-op].border-accent")).toHaveCount(0);
+});
