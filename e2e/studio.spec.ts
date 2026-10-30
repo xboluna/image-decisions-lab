@@ -530,3 +530,26 @@ test("nothing edits the working prompt while an earlier version is on screen", a
   await expect(promptStep).toContainText(workingHash);
   await expect(examples).toHaveCount(3);
 });
+
+test("a file dropped while viewing an earlier version, or outside any drop zone, never leaves the app", async ({ page }) => {
+  await open(page);
+  await train(page).locator("[data-comparison]").getByRole("button", { name: "See this prompt" }).click();
+  await expect(page.locator("[data-peek-banner]")).toBeVisible();
+  const zone = page.locator('[data-panel="prompt"]').getByText("Reference examples").locator("..").locator("..");
+  // Returns whether the browser's default (opening the file) was cancelled for dragover and drop.
+  const dropOn = (target: "zone" | "page") =>
+    (target === "zone" ? zone : page.locator("footer")).evaluate((el) => {
+      const dt = new DataTransfer();
+      dt.items.add(new File(["x"], "stray.jpg", { type: "image/jpeg" }));
+      const fire = (type: string) => {
+        const ev = new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt });
+        el.dispatchEvent(ev);
+        return ev.defaultPrevented;
+      };
+      return [fire("dragover"), fire("drop")];
+    });
+  expect(await dropOn("zone")).toEqual([true, true]);
+  expect(await dropOn("page")).toEqual([true, true]);
+  await expect(page.locator("[data-peek-banner]")).toBeVisible();
+  await expect(page.locator('[data-panel="prompt"] ol > li')).toHaveCount(0);
+});

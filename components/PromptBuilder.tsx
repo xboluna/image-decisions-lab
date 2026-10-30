@@ -440,17 +440,20 @@ export function PromptBuilder() {
         </div>
 
         <div
+          // File drags are always claimed here, so the browser never opens the file; while an earlier version is
+          // on screen they are just ignored.
           onDragOver={(e) => {
-            if (!peek && e.dataTransfer.types.includes("Files")) {
-              e.preventDefault();
-              setDropping(true);
-            }
+            if (!e.dataTransfer.types.includes("Files")) return;
+            e.preventDefault();
+            if (peek) e.dataTransfer.dropEffect = "none";
+            else setDropping(true);
           }}
           onDragLeave={() => setDropping(false)}
           onDrop={(e) => {
-            if (peek || !e.dataTransfer.files.length) return;
+            if (!e.dataTransfer.types.includes("Files")) return;
             e.preventDefault();
             setDropping(false);
+            if (peek || !e.dataTransfer.files.length) return;
             void addFiles(Array.from(e.dataTransfer.files));
           }}
           className={cx("rounded-xl transition-colors", dropping && "bg-accent-wash outline-2 outline-dashed outline-accent")}
