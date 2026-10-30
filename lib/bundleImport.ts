@@ -104,8 +104,15 @@ export async function scanBundle(input: FileEntry[], onProgress?: (p: ImportProg
     const manifest = own.find((f) => f.path === `${root}metadata.jsonl`) ?? own.find((f) => f.path === `${root}metadata.csv`)!;
     const text = await manifest.file.text();
     const parsed = manifest.path.endsWith(".jsonl") ? parseJsonl(text) : parseCsv(text);
-    const present = new Set(own.filter((f) => isImagePath(f.path)).map((f) => f.path));
-    const imagesFound = parsed.rows.filter((r) => present.has(root + normalizePath(r.fileName))).length;
+    // Match images the way the importer does: the exact path, else a file name that is unique in the folder.
+    const images = own.filter((f) => isImagePath(f.path));
+    const present = new Set(images.map((f) => f.path));
+    const byBase = new Map<string, number>();
+    for (const f of images) {
+      const b = f.path.split("/").pop() ?? f.path;
+      byBase.set(b, (byBase.get(b) ?? 0) + 1);
+    }
+    const imagesFound = parsed.rows.filter((r) => present.has(root + normalizePath(r.fileName)) || byBase.get(normalizePath(r.fileName).split("/").pop() ?? "") === 1).length;
     const card = await readJson<{ name?: string; hash?: string }>(byPath.get(`${root}dataset.json`));
     const folder = root.replace(/\/$/, "").split("/").pop() || "dataset";
     const role = guessRole(root.slice(base.length)) ?? "skip";
@@ -154,24 +161,45 @@ export type BundleImportResult = {
   prompt: Prompt | null;
   restoredRuns: number;
   restoredAnswers: number;
+  /** The model the restored answers came from, so it can be selected and the results show as current. */
+  restoredModel: string | null;
   warnings: string[];
 };
 
 /** Imports what the plan describes. Answers are restored only onto the exact dataset version they were scored on. */
 export async function importBundle(plan: BundlePlan, opts: { restoreAnswers: boolean; existingPromptNames: string[]; onProgress?: (p: ImportProgress) => void }): Promise<BundleImportResult> {
+  // All or nothing: if any step fails, the datasets, prompt and runs written so far are removed again, so a retry
+  // never leaves duplicates. Images and cached answers are content-addressed, so leftovers of those are harmless.
+  const written = { datasets: [] as string[], prompts: [] as string[], runs: [] as string[] };
+  try {
+    return await importAll(plan, opts, written);
+  } catch (err) {
+    await Promise.all([...written.datasets.map((id) => db.deleteDataset(id)), ...written.prompts.map((id) => db.deletePrompt(id)), ...written.runs.map((id) => db.deleteRun(id))]);
+    throw err;
+  }
+}
+
+async function importAll(
+  plan: BundlePlan,
+  opts: { restoreAnswers: boolean; existingPromptNames: string[]; onProgress?: (p: ImportProgress) => void },
+  written: { datasets: string[]; prompts: string[]; runs: string[] },
+): Promise<BundleImportResult> {
   const warnings: string[] = [];
   const imported: BundleImportResult["datasets"] = [];
   for (const d of plan.datasets.filter((x) => x.role !== "skip" && x.imagesFound > 0)) {
     const { dataset, warnings: w } = await importDataset(d.files, { name: d.name, source: "bundle", onProgress: opts.onProgress });
     warnings.push(...w.map((x) => `${d.name}: ${x}`));
+    written.datasets.push(dataset.id);
     imported.push({ role: d.role, dataset });
   }
   let prompt: Prompt | null = null;
+  let restoredModel: string | null = null;
   if (plan.prompt) {
     const r = await importPromptFiles(plan.files, opts.existingPromptNames, plan.prompt.path);
     prompt = r.prompt;
     warnings.push(...r.warnings);
     await db.putPrompt(prompt);
+    written.prompts.push(prompt.id);
   }
 
   let restoredRuns = 0;
@@ -233,9 +261,11 @@ export async function importBundle(plan: BundlePlan, opts: { restoreAnswers: boo
         costUsd: inferences.reduce((s, i) => s + i.usage.costUsd, 0),
       };
       await db.putRun(run);
+      written.runs.push(run.id);
+      restoredModel = model;
       restoredRuns++;
       restoredAnswers += inferences.length;
     }
   }
-  return { datasets: imported, prompt, restoredRuns, restoredAnswers, warnings };
+  return { datasets: imported, prompt, restoredRuns, restoredAnswers, restoredModel, warnings };
 }

@@ -564,6 +564,8 @@ test("an exported experiment imports into a fresh browser with its results, no s
   // A fresh browser profile with no demo.
   const fresh = await (await browser.newContext({ viewport: { width: 1600, height: 1000 } })).newPage();
   await fresh.route("**/demo/seed.json", (r) => r.fulfill({ status: 404, body: "" }));
+  // a browser set to another model: the import switches to the one that produced the answers
+  await fresh.addInitScript(() => localStorage.getItem("harness-studio.settings") || localStorage.setItem("harness-studio.settings", JSON.stringify({ model: "openai/gpt-6-luna-decisions" })));
   await fresh.goto("/");
   await fresh.locator('[data-panel="train"]').getByRole("button", { name: "Import experiment" }).click();
   const dialog = fresh.getByRole("dialog");
@@ -575,6 +577,7 @@ test("an exported experiment imports into a fresh browser with its results, no s
   await expect(plan).toContainText("48 answers");
   await dialog.getByRole("button", { name: "Import", exact: true }).click();
   await expect(dialog.locator("[data-bundle-result]")).toContainText("Restored 48 saved answers in 2 runs", { timeout: 60_000 });
+  await expect(dialog.locator("[data-bundle-result]")).toContainText("Model set to pplx-decider-v1.2");
   await dialog.getByRole("button", { name: "Done" }).click();
   await expect(fresh.locator('[data-panel="train"]').getByText("All 27 answers already cached")).toBeVisible();
   await expect(fresh.locator('[data-panel="test"]').getByText("All 21 answers already cached")).toBeVisible();
@@ -623,4 +626,42 @@ test("a plain folder with prompt.json and train/test datasets imports with roles
   await expect(page.getByRole("button", { name: "Choose prompt" })).toContainText("50 ml tubes v2 (imported)");
   // same prompt and images as the demo: their answers are already cached
   await expect(train(page).getByText("All 6 answers already cached")).toBeVisible();
+});
+
+test("bundle import finds images by file name, and a failed import leaves nothing behind", async ({ page }) => {
+  await open(page);
+  const dir = path.join(process.cwd(), "public/demo/train");
+  const lines = readFileSync(path.join(dir, "metadata.jsonl"), "utf8").trim().split("\n").slice(0, 4).map((l) => JSON.parse(l));
+  const card = JSON.parse(readFileSync(path.join(dir, "dataset.json"), "utf8"));
+  const build = async (prompt: object | null) => {
+    const zip = new JSZip();
+    // the manifest names bare file names; the images live in a subfolder
+    zip.file("bundle/train/metadata.jsonl", lines.map((l) => JSON.stringify({ ...l, file_name: l.file_name.split("/").pop() })).join("\n"));
+    zip.file("bundle/train/dataset.json", JSON.stringify({ name: "Bare names", schema: card.schema }));
+    for (const l of lines) zip.file(`bundle/train/pictures/${l.file_name.split("/").pop()}`, readFileSync(path.join(dir, l.file_name)));
+    if (prompt) zip.file("bundle/prompt.json", JSON.stringify(prompt));
+    const out = path.join(mkdtempSync(path.join(tmpdir(), "hs-")), "b.zip");
+    writeFileSync(out, await zip.generateAsync({ type: "nodebuffer" }));
+    return out;
+  };
+  const openImport = async (file: string) => {
+    await page.getByRole("button", { name: "More", exact: true }).click();
+    await page.getByRole("button", { name: "Import experiment…" }).click();
+    await page.getByRole("dialog").getByLabel("Experiment zip").setInputFiles(file);
+  };
+  // a prompt.json that reads fine but breaks the import after the dataset was written
+  await openImport(await build({ name: "Broken", examples: 3 }));
+  await expect(page.getByRole("dialog").locator("[data-bundle-plan]")).toContainText("4 of 4 images");
+  await page.getByRole("dialog").getByRole("button", { name: "Import", exact: true }).click();
+  await expect(page.getByRole("dialog").locator(".bg-critical-wash")).toBeVisible({ timeout: 30_000 });
+  await page.getByRole("dialog").getByRole("button", { name: "Back" }).click();
+  await page.keyboard.press("Escape");
+  await testPanel(page).getByRole("button", { name: /Choose test dataset/ }).click();
+  await expect(page.getByRole("button", { name: /^Bare names/ })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+
+  // the same layout without the broken prompt imports
+  await openImport(await build(null));
+  await page.getByRole("dialog").getByRole("button", { name: "Import", exact: true }).click();
+  await expect(page.getByRole("dialog").locator("[data-bundle-result]")).toContainText("Bare names · 4 images", { timeout: 30_000 });
 });

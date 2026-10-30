@@ -72,9 +72,13 @@ export function BundleImportDialog() {
       const s = useStore.getState();
       for (const d of r.datasets) if (d.role !== "skip") s.selectDataset(d.role, d.dataset.id);
       if (r.prompt) s.selectPrompt(r.prompt.id);
+      // The restored answers belong to the exported run's model; select it so they show as current.
+      if (r.restoredModel && r.restoredModel !== s.settings.model) s.setSettings({ model: r.restoredModel });
       setResult(r);
       setPhase("done");
     } catch (err) {
+      // Nothing was kept (the import rolls back), but reload so the page matches what is stored.
+      await hydrate();
       setError(err instanceof Error ? err.message : String(err));
       setPhase("review");
     } finally {
@@ -260,6 +264,12 @@ export function BundleImportDialog() {
               {result.restoredAnswers > 0 && (
                 <div className="text-ink-2">
                   <b className="font-medium text-ink">Restored</b> {result.restoredAnswers} saved answers in {result.restoredRuns} run{result.restoredRuns === 1 ? "" : "s"}: no scoring needed.
+                  {result.restoredModel && (
+                    <>
+                      {" "}
+                      Model set to <span className="font-mono text-[12px]">{result.restoredModel.split("/").pop()}</span>, which produced them.
+                    </>
+                  )}
                 </div>
               )}
             </div>
