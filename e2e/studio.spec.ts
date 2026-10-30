@@ -1073,3 +1073,34 @@ test("an exported experiment brings its prompt's image views back on import", as
   await expect(fresh.locator("nav[aria-label=Experiment] > div").nth(1)).toContainText(hash);
   await fresh.context().close();
 });
+
+test("saved answers follow their dataset when roles are swapped, and the same zip can be chosen twice", async ({ page, browser }) => {
+  await open(page);
+  await page.getByRole("button", { name: "Export experiment" }).click();
+  const dl = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download zip" }).click();
+  const file = { name: "experiment.zip", mimeType: "application/zip", buffer: readFileSync(await (await dl).path()) };
+
+  const fresh = await (await browser.newContext({ viewport: { width: 1600, height: 1000 } })).newPage();
+  await fresh.route("**/demo/seed.json", (r) => r.fulfill({ status: 404, body: "" }));
+  await fresh.goto("/");
+  await fresh.locator('[data-panel="train"]').getByRole("button", { name: "Import experiment" }).click();
+  const dialog = fresh.getByRole("dialog");
+  await dialog.getByLabel("Experiment zip").setInputFiles(file);
+  await expect(dialog.locator("[data-bundle-plan]")).toBeVisible();
+  // Back, then the same file again: the scan runs again
+  await dialog.getByRole("button", { name: "Back" }).click();
+  await dialog.getByLabel("Experiment zip").setInputFiles(file);
+  const plan = dialog.locator("[data-bundle-plan] li");
+  await expect(plan.filter({ hasText: "datasets/train/" })).toBeVisible();
+  // swap the roles: the answers still belong to the same dataset versions
+  await plan.filter({ hasText: "datasets/test/" }).getByRole("radio", { name: "Training" }).click();
+  await plan.filter({ hasText: "datasets/train/" }).getByRole("radio", { name: "Test" }).click();
+  await expect(dialog.getByRole("checkbox", { name: /Restore/ })).toBeChecked();
+  await dialog.getByRole("button", { name: "Import", exact: true }).click();
+  await expect(dialog.locator("[data-bundle-result]")).toContainText("Restored 48 saved answers in 2 runs", { timeout: 60_000 });
+  await dialog.getByRole("button", { name: "Done" }).click();
+  await expect(fresh.locator('[data-panel="train"]').getByText("All 21 answers already cached")).toBeVisible();
+  await expect(fresh.locator('[data-panel="test"]').getByText("All 27 answers already cached")).toBeVisible();
+  await fresh.context().close();
+});

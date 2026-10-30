@@ -57,6 +57,13 @@ export function BundleImportDialog() {
     }
   }
 
+  // Read the chosen files, then clear the input so choosing the same folder or zip again (after Back) still fires.
+  const pick = (input: HTMLInputElement) => {
+    const files = input.files ? filesFromInput(input.files) : [];
+    input.value = "";
+    if (files.length) void scan(files);
+  };
+
   // Only one dataset per role: choosing a role for one dataset frees it from the other.
   const setRole = (i: number, role: BundleRole) =>
     setRoles((cur) => cur.map((r, j) => (j === i ? role : role !== "skip" && r === role ? "skip" : r)));
@@ -86,7 +93,8 @@ export function BundleImportDialog() {
     }
   }
 
-  const restorable = plan?.results.filter((r) => roles.includes(r.role)) ?? [];
+  // Answers can be restored when the exact dataset version they were scored on is being imported, in any role.
+  const restorable = plan?.results.filter((r) => plan.datasets.some((d, i) => roles[i] !== "skip" && d.exportedHash === r.run.dataset_hash.replace(/^sha256:/, ""))) ?? [];
   const answers = plan?.results.reduce((s, r) => s + r.predictions.filter((p) => p.raw_probabilities && !p.error).length, 0) ?? 0;
   const willImport = plan ? roles.filter((r) => r !== "skip").length + (usePrompt && plan.prompt ? 1 : 0) : 0;
 
@@ -145,8 +153,8 @@ export function BundleImportDialog() {
                 </Button>
               </div>
             )}
-            <input ref={folderInput} type="file" className="hidden" multiple {...({ webkitdirectory: "", directory: "" } as Record<string, string>)} onChange={(e) => e.target.files && void scan(filesFromInput(e.target.files))} />
-            <input ref={zipInput} type="file" accept=".zip,application/zip" className="hidden" aria-label="Experiment zip" onChange={(e) => e.target.files && void scan(filesFromInput(e.target.files))} />
+            <input ref={folderInput} type="file" className="hidden" multiple {...({ webkitdirectory: "", directory: "" } as Record<string, string>)} onChange={(e) => pick(e.currentTarget)} />
+            <input ref={zipInput} type="file" accept=".zip,application/zip" className="hidden" aria-label="Experiment zip" onChange={(e) => pick(e.currentTarget)} />
           </div>
           {phase === "scanning" && progress && <ProgressBar value={progress.total ? progress.done / progress.total : 0} />}
           {error && <ErrorBox text={error} />}
@@ -219,11 +227,11 @@ export function BundleImportDialog() {
                   <div className="text-[11.5px] text-muted">
                     {answers} answers ({plan.results.map((r) => `${r.role === "train" ? "training" : "test"} ${r.predictions.filter((p) => p.raw_probabilities && !p.error).length}`).join(", ")}) from{" "}
                     <span className="font-mono">{plan.results[0].run.model.split("/").pop()}</span>
-                    {restorable.length < plan.results.length ? " · only for the datasets being imported" : ""}
+                    {restorable.length === 0 ? " · none of their datasets is being imported" : restorable.length < plan.results.length ? " · only for the datasets being imported" : ""}
                   </div>
                 </div>
                 <label className="flex items-center gap-1.5 text-[12.5px]">
-                  <input type="checkbox" checked={restore && usePrompt} onChange={(e) => setRestore(e.target.checked)} className="accent-[var(--accent)]" disabled={!usePrompt || phase === "importing"} />
+                  <input type="checkbox" checked={restore && usePrompt && restorable.length > 0} onChange={(e) => setRestore(e.target.checked)} className="accent-[var(--accent)]" disabled={!usePrompt || !restorable.length || phase === "importing"} />
                   Restore
                 </label>
               </li>

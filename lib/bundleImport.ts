@@ -220,10 +220,11 @@ async function importAll(
   let restoredAnswers = 0;
   if (opts.restoreAnswers && prompt) {
     for (const res of plan.results) {
-      const target = imported.find((x) => x.role === res.role);
-      if (!target) continue;
-      if (stripSha(res.run.dataset_hash) !== target.dataset.hash) {
-        warnings.push(`The ${res.role} answers were scored on a different version of “${target.dataset.name}”, so they were not restored.`);
+      // Answers belong to a dataset version, not a role: restore them onto the imported dataset with the same hash,
+      // whatever role it was given in the review.
+      const target = imported.find((x) => x.dataset.hash === stripSha(res.run.dataset_hash));
+      if (!target) {
+        warnings.push(`The ${res.role} answers were scored on a dataset version that is not being imported, so they were not restored.`);
         continue;
       }
       const promptHash = stripSha(res.run.prompt_hash);
@@ -256,7 +257,7 @@ async function importAll(
       const complete = inferences.length === target.dataset.items.length;
       const run: Run = {
         id: uid("run"),
-        role: res.role,
+        role: target.role === "test" ? "test" : "train",
         datasetId: target.dataset.id,
         datasetHash: target.dataset.hash,
         datasetName: target.dataset.name,
