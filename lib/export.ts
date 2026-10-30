@@ -221,7 +221,14 @@ function comparisonRecord(a: Analysis, mapping: ClassMapping, advanced: boolean)
       ? (() => {
           const x = computeAdvanced(paired.after, a.target, mapping, a.view);
           const y = computeAdvanced(paired.before, a.target, mapping, a.view);
-          return { advanced_deltas: { auroc: delta(x.auroc, y.auroc), macro_balanced_accuracy: delta(x.macroBa, y.macroBa) } };
+          return {
+            advanced_deltas: {
+              auroc: delta(x.auroc, y.auroc),
+              // the same rule as the tile: only where a threshold is fitted (training set, binary views)
+              cross_validated_balanced_accuracy: a.role === "train" ? delta(x.crossValidatedBa, y.crossValidatedBa) : null,
+              macro_balanced_accuracy: delta(x.macroBa, y.macroBa),
+            },
+          };
         })()
       : {}),
   };
