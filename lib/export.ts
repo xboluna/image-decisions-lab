@@ -199,7 +199,7 @@ function advancedRecord(a: Analysis, mapping: ClassMapping) {
     notes: {
       auroc: a.view.mode === "binary" ? "Mann-Whitney on the positive score; ties count half" : "one-vs-rest average over classes with both cases",
       cross_validated_balanced_accuracy:
-        a.role !== "train" ? "not computed: the test set uses the training threshold" : a.view.mode !== "binary" ? "not computed: the all-classes view fits no threshold" : "threshold fitted on one fixed half (FNV-1a hash of the image id), scored on the other, both ways",
+        a.role !== "train" ? "not computed: the test set uses the training threshold" : a.view.mode !== "binary" ? "not computed: the all-classes view fits no threshold" : "threshold fitted on one fixed half, scored on the other, both ways; halves stratified by class, ordered by a mixed hash of the image id",
       macro_balanced_accuracy: "one-vs-rest balanced accuracy per class, averaged over classes with at least 3 images",
     },
   };
