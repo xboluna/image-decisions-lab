@@ -64,10 +64,11 @@ export type BundlePlan = {
 const dirname = (p: string) => (p.includes("/") ? p.slice(0, p.lastIndexOf("/") + 1) : "");
 const stripSha = (h: string) => h.replace(/^sha256:/, "");
 
+/** The role a dataset's own folder name suggests. Parent folders (e.g. a "training_run/" wrapper) never count. */
 function guessRole(root: string): BundleRole | null {
-  const parts = root.toLowerCase().split("/").filter(Boolean);
-  if (parts.some((p) => /(^|[^a-z])(train|training)([^a-z]|$)/.test(p))) return "train";
-  if (parts.some((p) => /(^|[^a-z])(test|holdout|val|validation|eval)([^a-z]|$)/.test(p))) return "test";
+  const own = root.toLowerCase().split("/").filter(Boolean).pop() ?? "";
+  if (/(^|[^a-z])(test|holdout|val|validation|eval)([^a-z]|$)/.test(own)) return "test";
+  if (/(^|[^a-z])(train|training)([^a-z]|$)/.test(own)) return "train";
   return null;
 }
 
@@ -97,6 +98,7 @@ export async function scanBundle(input: FileEntry[], onProgress?: (p: ImportProg
   const roots: string[] = [];
   for (const m of manifests) if (!roots.includes(dirname(m.path))) roots.push(dirname(m.path));
   const datasets: BundleDataset[] = [];
+  const named = new Set<string>();
   for (const root of roots.sort()) {
     // A dataset owns its folder, minus any nested dataset folders.
     const nested = roots.filter((r) => r !== root && r.startsWith(root));
@@ -115,11 +117,20 @@ export async function scanBundle(input: FileEntry[], onProgress?: (p: ImportProg
     const imagesFound = parsed.rows.filter((r) => present.has(root + normalizePath(r.fileName)) || byBase.get(normalizePath(r.fileName).split("/").pop() ?? "") === 1).length;
     const card = await readJson<{ name?: string; hash?: string }>(byPath.get(`${root}dataset.json`));
     const folder = root.replace(/\/$/, "").split("/").pop() || "dataset";
-    const role = guessRole(root.slice(base.length)) ?? "skip";
+    const guessed = imagesFound > 0 ? guessRole(root.slice(base.length)) : null;
+    const role = guessed ?? "skip";
+    if (guessed) named.add(root);
     datasets.push({ root, folder: root.slice(base.length) || "./", files: own, name: card?.name ?? folder, role, rows: parsed.rows.length, imagesFound, exportedHash: card?.hash ? stripSha(card.hash) : undefined });
   }
-  // Roles no folder name claimed go to the unnamed datasets, in order: training first, then test.
-  const unassigned = datasets.filter((d) => d.role === "skip" && d.imagesFound > 0);
+  // One dataset per role: when several folders look like the same role, the first keeps it and the others start on
+  // Skip (with a note), so answers are never restored onto a dataset that is not the one selected.
+  for (const role of ["train", "test"] as const) {
+    const claimed = datasets.filter((d) => d.role === role);
+    for (const extra of claimed.slice(1)) extra.role = "skip";
+    if (claimed.length > 1) warnings.push(`Several folders look like the ${role === "train" ? "training" : "test"} set: using ${claimed[0].folder}, skipping ${claimed.slice(1).map((d) => d.folder).join(", ")}. Change the roles below if needed.`);
+  }
+  // Roles no folder name claimed go to the datasets whose names suggest no role, in order: training, then test.
+  const unassigned = datasets.filter((d) => d.role === "skip" && d.imagesFound > 0 && !named.has(d.root));
   if (!datasets.some((d) => d.role === "train") && unassigned.length) unassigned.shift()!.role = "train";
   if (!datasets.some((d) => d.role === "test") && unassigned.length) unassigned.shift()!.role = "test";
   const order = { train: 0, test: 1, skip: 2 };
@@ -170,6 +181,9 @@ export type BundleImportResult = {
 export async function importBundle(plan: BundlePlan, opts: { restoreAnswers: boolean; existingPromptNames: string[]; onProgress?: (p: ImportProgress) => void }): Promise<BundleImportResult> {
   // All or nothing: if any step fails, the datasets, prompt and runs written so far are removed again, so a retry
   // never leaves duplicates. Images and cached answers are content-addressed, so leftovers of those are harmless.
+  for (const role of ["train", "test"] as const) {
+    if (plan.datasets.filter((d) => d.role === role).length > 1) throw new Error(`Choose one ${role === "train" ? "training" : "test"} dataset; the others can be skipped.`);
+  }
   const written = { datasets: [] as string[], prompts: [] as string[], runs: [] as string[] };
   try {
     return await importAll(plan, opts, written);

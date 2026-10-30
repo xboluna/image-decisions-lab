@@ -774,3 +774,41 @@ test("a named training folder plus an unnamed one makes the unnamed one the test
   await expect(plan.filter({ hasText: "exp/train/" }).getByRole("radio", { name: "Training" })).toHaveAttribute("aria-checked", "true");
   await expect(plan.filter({ hasText: "exp/batch_7/" }).getByRole("radio", { name: "Test" })).toHaveAttribute("aria-checked", "true");
 });
+
+test("folder roles come from each dataset's own folder, one dataset per role", async ({ page }) => {
+  await open(page);
+  const dir = path.join(process.cwd(), "public/demo/test");
+  const lines = readFileSync(path.join(dir, "metadata.jsonl"), "utf8").trim().split("\n").slice(0, 2);
+  const bundle = async (folders: string[]) => {
+    const zip = new JSZip();
+    for (const folder of folders) {
+      zip.file(`${folder}/metadata.jsonl`, lines.join("\n"));
+      zip.file(`${folder}/dataset.json`, readFileSync(path.join(dir, "dataset.json")));
+      for (const l of lines.map((x) => JSON.parse(x))) zip.file(`${folder}/${l.file_name}`, readFileSync(path.join(dir, l.file_name)));
+    }
+    const out = path.join(mkdtempSync(path.join(tmpdir(), "hs-")), "b.zip");
+    writeFileSync(out, await zip.generateAsync({ type: "nodebuffer" }));
+    return out;
+  };
+  const scan = async (file: string) => {
+    await page.getByRole("button", { name: "More", exact: true }).click();
+    await page.getByRole("button", { name: "Import experiment…" }).click();
+    await page.getByRole("dialog").getByLabel("Experiment zip").setInputFiles(file);
+    return page.getByRole("dialog").locator("[data-bundle-plan] li");
+  };
+  const role = (plan: ReturnType<Page["locator"]>, folder: string, name: string) => expect(plan.filter({ hasText: folder }).getByRole("radio", { name })).toHaveAttribute("aria-checked", "true");
+
+  // a wrapper folder named like a role does not claim its datasets
+  let plan = await scan(await bundle(["my-training-export/train", "my-training-export/holdout"]));
+  await role(plan, "my-training-export/train/", "Training");
+  await role(plan, "my-training-export/holdout/", "Test");
+  await page.getByRole("dialog").getByRole("button", { name: "Back" }).click();
+  await page.keyboard.press("Escape");
+
+  // two folders that both look like training sets: the first keeps the role, the other starts on Skip
+  plan = await scan(await bundle(["exp/train", "exp/training_set", "exp/test"]));
+  await role(plan, "exp/train/", "Training");
+  await role(plan, "exp/training_set/", "Skip");
+  await role(plan, "exp/test/", "Test");
+  await expect(page.getByRole("dialog")).toContainText("Several folders look like the training set");
+});
