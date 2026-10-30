@@ -27,6 +27,8 @@ local storage. Model calls go straight from the browser to `openrouter.ai`. Ther
    examples (test-set images are never offered). Merge or exclude classes to see whether a coarser label scores better.
 8. **Export experiment.** Export one zip with the prompt (and exact request body), dataset manifests and hashes,
    per-image answers (JSONL and CSV), metrics, PR curves, confusion matrix, histogram, and the charts as SVG.
+   The metrics record the version compared against, with both versions' metrics on the images scored in both;
+   tick **Include advanced metrics** to add AUROC, cross-validated and macro balanced accuracy.
 
 ## Dataset format
 

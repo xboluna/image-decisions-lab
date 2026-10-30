@@ -579,3 +579,37 @@ test("advanced metrics are off by default and toggled from the ⋯ menu", async 
   await page.reload();
   await expect(train(page).locator("[data-advanced-metrics]")).toBeVisible({ timeout: 30_000 });
 });
+
+test("the export can include advanced metrics and always records what it was compared against", async ({ page }) => {
+  await open(page);
+  const exportZip = async (advanced: boolean) => {
+    await page.getByRole("button", { name: "Export experiment" }).click();
+    const box = page.getByRole("dialog").getByLabel("Include advanced metrics");
+    await expect(box).not.toBeChecked(); // follows the Advanced metrics toggle, off by default
+    if (advanced) await box.check();
+    const dl = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Download zip" }).click();
+    const zip = await JSZip.loadAsync(readFileSync(await (await dl).path()));
+    const find = (s: string) => Object.keys(zip.files).find((n) => n.endsWith(s))!;
+    return {
+      experiment: JSON.parse(await zip.file(find("experiment.json"))!.async("string")),
+      trainMetrics: JSON.parse(await zip.file(find("results/train/metrics.json"))!.async("string")),
+      testMetrics: JSON.parse(await zip.file(find("results/test/metrics.json"))!.async("string")),
+    };
+  };
+  const plain = await exportZip(false);
+  expect(plain.trainMetrics.advanced_metrics).toBeUndefined();
+  expect(plain.experiment.results.train.auroc).toBeUndefined();
+  expect(plain.trainMetrics.comparison.compared_against.prompt_name).toBe("50 ml tubes v1");
+  expect(plain.trainMetrics.comparison.paired_images).toBe(27);
+  expect(plain.experiment.results.train.balanced_accuracy_delta).toBeGreaterThan(0);
+
+  const full = await exportZip(true);
+  expect(full.trainMetrics.advanced_metrics.auroc).toBeGreaterThan(0.5);
+  expect(full.trainMetrics.advanced_metrics.macro_balanced_accuracy).toBeGreaterThan(0.5);
+  // the all-classes view fits no threshold, so there is nothing to cross-validate
+  expect(full.trainMetrics.advanced_metrics.cross_validated_balanced_accuracy).toBeNull();
+  expect(full.testMetrics.advanced_metrics.notes.cross_validated_balanced_accuracy).toContain("training threshold");
+  expect(full.experiment.results.train.auroc).toBe(full.trainMetrics.advanced_metrics.auroc);
+  expect(full.trainMetrics.comparison.advanced_deltas).toHaveProperty("auroc");
+});
