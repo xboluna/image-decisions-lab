@@ -76,3 +76,35 @@ describe("primitives", () => {
     expect(px(rotateClockwise(r, 3), 0, 0)).toEqual([0, 0, 100]);
   });
 });
+
+import { enlargedSize, opsSize, type ImageOp } from "@/lib/ops";
+
+describe("geometry for previews", () => {
+  it("predicts the size of the result without touching pixels", () => {
+    const cases: ImageOp[][] = [
+      [{ kind: "crop", area: { region: "r" }, margin: 0.12 }],
+      [{ kind: "rotate", degrees: 90 }, { kind: "crop", area: { region: "r" }, margin: 0.3 }],
+      [{ kind: "crop", area: { box: [0.05, 0.6, 0.97, 0.99] }, margin: 0.4 }, { kind: "rotate", degrees: 270 }, { kind: "crop", area: { region: "r" }, margin: 0 }],
+      [{ kind: "outline", area: { region: "r" }, color: "#ff00ff", width: 0 }, { kind: "spotlight", area: { region: "r" }, dim: 0.3 }],
+    ];
+    for (const [w, h] of [[200, 100], [173, 311], [640, 480]])
+      for (const ops of cases) {
+        const { image } = applyOps(grid(w, h), ops, regions);
+        expect(opsSize(w, h, ops, regions)).toEqual([image.width, image.height]);
+      }
+  });
+  it("scales automatic outline widths on a downscaled preview", () => {
+    // a 2000 px image gets an 8 px line; its half-size preview draws 4 px
+    const op: ImageOp = { kind: "outline", area: { box: [0.25, 0.25, 0.75, 0.75] }, color: "#ff0000", width: 0 };
+    const preview = applyOps(grid(1000, 500), [op], [], { scale: 0.5 }).image;
+    const row = 125; // the box's top edge in the preview is at y 125, the line sits just above it
+    let painted = 0;
+    for (let y = row - 10; y < row; y++) if (preview.data[(y * 1000 + 500) * 3] === 255 && preview.data[(y * 1000 + 500) * 3 + 1] === 0) painted++;
+    expect(painted).toBe(4);
+  });
+  it("enlarges to an exact size, rounding half up", () => {
+    expect(enlargedSize(100, 50, 1024)).toEqual([1024, 512]);
+    expect(enlargedSize(3, 2, 1000)).toEqual([1000, 667]);
+    expect(enlargedSize(40, 160, 1000)).toEqual([250, 1000]);
+  });
+});

@@ -3,8 +3,9 @@ import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Crop, Focus, Frame, Laye
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { uid } from "@/lib/hash";
 import { modelInfo } from "@/lib/models";
-import { applyOps, autoLineWidth, DEFAULT_OUTLINE, defaultOp, describeOps, OP_LABELS, resolveArea, type Area, type Box, type ImageOp, type ImageView, type Region, type Rgb } from "@/lib/ops";
-import { paint, previewRgb } from "@/lib/preview";
+import { applyOps, autoLineWidth, DEFAULT_OUTLINE, defaultOp, describeOps, enlargedSize, opsSize, OP_LABELS, resolveArea, type Area, type Box, type ImageOp, type ImageView, type Region, type Rgb } from "@/lib/ops";
+import { thumbnailSize } from "@/lib/pillow";
+import { paint, previewRgb, type PreviewRgb } from "@/lib/preview";
 import { imagesPerRequest, promptViews, viewCaption, WHOLE_IMAGE } from "@/lib/prompt";
 import type { Prompt } from "@/lib/types";
 import { Badge, Button, cx, IconButton, inputClass, Modal, Popover, Segmented, Spinner } from "./ui";
@@ -14,8 +15,8 @@ import { Badge, Button, cx, IconButton, inputClass, Modal, Popover, Segmented, S
 const STAGE_COLORS = ["#2a78d6", "#d68a00", "#d6457f", "#6a5ad6", "#0f9d8a", "#7a8a00"];
 const OUTLINE_SWATCHES = ["#ff00ff", "#ffd400", "#00e5ff", "#ff2d2d", "#39ff14", "#ffffff"];
 
-export function useRgb(hash: string | undefined): Rgb | null | undefined {
-  const [rgb, setRgb] = useState<Rgb | null | undefined>(undefined);
+export function useRgb(hash: string | undefined): PreviewRgb | null | undefined {
+  const [rgb, setRgb] = useState<PreviewRgb | null | undefined>(undefined);
   useEffect(() => {
     if (!hash) return setRgb(null);
     let live = true;
@@ -38,11 +39,12 @@ export function RgbCanvas({ img, className, label }: { img: Rgb; className?: str
 }
 
 /** What the model receives for one view of one image: the operations applied, at the size it is sent. */
-export function ViewPreview({ rgb, ops, regions, maxSide, enlarge, title, caption, compact }: { rgb: Rgb; ops: ImageOp[]; regions: Region[]; maxSide: number; enlarge: boolean; title: string; caption?: string; compact?: boolean }) {
-  const { image, warnings } = useMemo(() => applyOps(rgb, ops, regions), [rgb, ops, regions]);
-  const longest = Math.max(image.width, image.height);
-  const scale = longest > maxSide || enlarge ? maxSide / longest : 1;
-  const sent = `${Math.round(image.width * scale)}×${Math.round(image.height * scale)}`;
+export function ViewPreview({ rgb, ops, regions, maxSide, enlarge, title, caption, compact }: { rgb: PreviewRgb; ops: ImageOp[]; regions: Region[]; maxSide: number; enlarge: boolean; title: string; caption?: string; compact?: boolean }) {
+  const { image, warnings } = useMemo(() => applyOps(rgb, ops, regions, { scale: rgb.width / rgb.sourceWidth }), [rgb, ops, regions]);
+  // The size sent comes from the full-size image (previews are a downscaled copy), resized as the pipeline does.
+  const [w, h] = opsSize(rgb.sourceWidth, rgb.sourceHeight, ops, regions);
+  const [sw, sh] = enlarge && Math.max(w, h) < maxSide ? enlargedSize(w, h, maxSide) : (thumbnailSize(w, h, maxSide) ?? [w, h]);
+  const sent = `${sw}×${sh}`;
   return (
     <figure className="min-w-0" data-view-preview>
       <div className={cx("flex items-center justify-center overflow-hidden rounded-lg border border-line bg-[repeating-conic-gradient(var(--surface-3)_0_25%,var(--surface-2)_0_50%)] bg-[length:16px_16px]", compact ? "h-24" : "h-44")}>
@@ -732,7 +734,9 @@ export function ImageEditor({ hash, name, initialOps, regions, maxSide, title, s
             <div className="border-t border-line pt-3">
               <div className="mb-1.5 text-[12px] font-medium text-ink-2">Result</div>
               <ViewPreview rgb={rgb} ops={ops} regions={regions} maxSide={maxSide} enlarge={false} title="Sent as" />
-              {ops.some((o) => o.kind === "outline" && o.width === 0) && <div className="mt-1 text-[11px] text-muted">Automatic outline width: {autoLineWidth(rgb)} px on this image.</div>}
+              {ops.some((o) => o.kind === "outline" && o.width === 0) && (
+                <div className="mt-1 text-[11px] text-muted">Automatic outline width: 1/250 of the longer side where it is drawn, at least 4 px ({autoLineWidth({ width: rgb.sourceWidth, height: rgb.sourceHeight })} px on the whole image).</div>
+              )}
             </div>
           )}
         </div>

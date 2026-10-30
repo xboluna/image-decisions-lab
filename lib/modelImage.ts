@@ -11,7 +11,7 @@
 
 import { decodeToRgb, type Decoded } from "./decodeImage.ts";
 import { encodeJpeg } from "./jpegEncoder.ts";
-import { applyOps, type ImageOp, type Region } from "./ops.ts";
+import { applyOps, enlargedSize, type ImageOp, type Region } from "./ops.ts";
 import { resample, thumbnail } from "./pillow.ts";
 
 export type ModelImage = {
@@ -24,15 +24,6 @@ export type ModelImage = {
 
 export async function encodeForModel(bytes: Uint8Array, maxSide: number, quality: number, view: ViewSpec = { ops: [], regions: [], enlarge: false }): Promise<ModelImage> {
   return renderView(await decodeToRgb(bytes), view, maxSide, quality);
-}
-
-/**
- * Size of an image enlarged so its longest side is exactly maxSide, the other side rounded half up. Defined
- * explicitly (not with Python's round, which rounds half to even) so the reference pipeline computes the same.
- */
-export function enlargedSize(width: number, height: number, maxSide: number): [number, number] {
-  if (width >= height) return [maxSide, Math.max(1, Math.floor((height * maxSide) / width + 0.5))];
-  return [Math.max(1, Math.floor((width * maxSide) / height + 0.5)), maxSide];
 }
 
 export type ViewSpec = { ops: ImageOp[]; regions: Region[]; enlarge: boolean };

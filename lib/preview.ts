@@ -6,10 +6,13 @@ import { applyOps, type ImageOp, type Region, type Rgb } from "./ops";
 /** Longest side of images decoded for on-screen previews: enough detail to place boxes, small enough to stay fast. */
 export const PREVIEW_SIDE = 1600;
 
-const decoded = new Map<string, Promise<Rgb | null>>();
+/** Preview pixels plus the size of the stored image they were shrunk from. */
+export type PreviewRgb = Rgb & { sourceWidth: number; sourceHeight: number };
+
+const decoded = new Map<string, Promise<PreviewRgb | null>>();
 
 /** A stored image as RGB pixels for previews, shrunk to PREVIEW_SIDE. Areas are fractions, so they land the same. */
-export function previewRgb(hash: string): Promise<Rgb | null> {
+export function previewRgb(hash: string): Promise<PreviewRgb | null> {
   let p = decoded.get(hash);
   if (!p) {
     p = (async () => {
@@ -17,10 +20,11 @@ export function previewRgb(hash: string): Promise<Rgb | null> {
       if (!blob) return null;
       const bitmap = await createImageBitmap(blob);
       const scale = Math.min(1, PREVIEW_SIDE / Math.max(bitmap.width, bitmap.height));
+      const source = { sourceWidth: bitmap.width, sourceHeight: bitmap.height };
       const w = Math.max(1, Math.round(bitmap.width * scale));
       const h = Math.max(1, Math.round(bitmap.height * scale));
       bitmap.close();
-      if (scale === 1) return decodeRgb(blob);
+      if (scale === 1) return { ...(await decodeRgb(blob)), ...source };
       const small = await createImageBitmap(blob, { resizeWidth: w, resizeHeight: h, resizeQuality: "high" });
       const canvas = document.createElement("canvas");
       canvas.width = w;
@@ -35,7 +39,7 @@ export function previewRgb(hash: string): Promise<Rgb | null> {
         data[j + 1] = rgba[i + 1];
         data[j + 2] = rgba[i + 2];
       }
-      return { width: w, height: h, data };
+      return { width: w, height: h, data, ...source };
     })().catch(() => null);
     decoded.set(hash, p);
   }
@@ -67,7 +71,7 @@ export function editedThumb(hash: string, ops: ImageOp[], regions: Region[], sid
   if (!p) {
     p = previewRgb(hash).then((rgb) => {
       if (!rgb) return null;
-      const { image } = applyOps(rgb, ops, regions);
+      const { image } = applyOps(rgb, ops, regions, { scale: rgb.width / rgb.sourceWidth });
       const scale = Math.min(1, side / Math.max(image.width, image.height));
       const full = document.createElement("canvas");
       paint(full, image);

@@ -9,7 +9,7 @@ import { exportPrompt } from "@/lib/export";
 import { sha256Bytes } from "@/lib/hash";
 import { imageSize, resizeJpeg } from "@/lib/image";
 import { modelInfo } from "@/lib/models";
-import { imagesPerRequest, promptProblems, promptViews, usesImageViews } from "@/lib/prompt";
+import { imagesPerRequest, promptProblems, promptViews } from "@/lib/prompt";
 import { importPromptZip } from "@/lib/promptImport";
 import { useStore } from "@/lib/store";
 import type { Dataset, LabelSchema, Prompt, PromptExample } from "@/lib/types";
@@ -328,7 +328,9 @@ function ImageViewsSection({ prompt, samples, model, readOnly }: { prompt: Promp
   const [open, setOpen] = useState(false);
   const rgb = useRgb(samples[0]?.hash);
   const views = promptViews(prompt);
-  const custom = usesImageViews(prompt) && (views.length > 1 || views.some((v) => v.ops.length));
+  // Anything saved that changes the request counts: operations, captions, Enlarge, extra views, or regions.
+  const custom = views.length > 1 || views.some((v) => v.ops.length || v.caption.trim() || v.enlarge) || !!prompt.regions?.length;
+  const unusedRegions = (prompt.regions ?? []).filter((r) => !views.some((v) => v.ops.some((o) => "area" in o && "region" in o.area && o.area.region === r.id)));
   return (
     <div className="rounded-xl border border-line bg-surface-2 p-3" data-views-section>
       <div className="flex items-center justify-between gap-2">
@@ -343,11 +345,20 @@ function ImageViewsSection({ prompt, samples, model, readOnly }: { prompt: Promp
         <>
           <ol className="mt-2 space-y-0.5 text-[12px] text-ink">
             {viewSummary(prompt).map((line, i) => (
-              <li key={i} className="truncate">
-                {line}
+              <li key={i} className="min-w-0">
+                <span className="block truncate">
+                  {line}
+                  {views[i]?.enlarge && <span className="text-muted"> · enlarged</span>}
+                </span>
+                {views[i]?.caption.trim() && <span className="block truncate text-[11.5px] text-ink-2">“{views[i].caption.trim()}”</span>}
               </li>
             ))}
           </ol>
+          {unusedRegions.length > 0 && (
+            <div className="mt-1 text-[11.5px] text-muted">
+              {unusedRegions.length} region{unusedRegions.length === 1 ? "" : "s"} not used by any view: {unusedRegions.map((r) => r.name).join(", ")}
+            </div>
+          )}
           {rgb && (
             <div className={cx("mt-2 grid gap-2", views.length > 1 ? "grid-cols-2" : "grid-cols-1")}>
               {views.map((v, i) => (

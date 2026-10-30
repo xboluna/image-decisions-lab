@@ -181,8 +181,13 @@ export function autoLineWidth(img: { width: number; height: number }): number {
 
 export type OpsResult = { image: Rgb; warnings: string[] };
 
-/** Applies the operations in order. Areas that cannot be resolved (a deleted region) are skipped with a warning. */
-export function applyOps(src: Rgb, ops: ImageOp[], regions: Region[]): OpsResult {
+/**
+ * Applies the operations in order. Areas that cannot be resolved (a deleted region) are skipped with a warning.
+ * `scale` is for on-screen previews of a downscaled copy (preview pixels per original pixel): outline widths are
+ * worked out at full size and scaled, so the preview looks like what is sent.
+ */
+export function applyOps(src: Rgb, ops: ImageOp[], regions: Region[], opts: { scale?: number } = {}): OpsResult {
+  const scale = opts.scale ?? 1;
   let img = src;
   let t = IDENTITY;
   const warnings: string[] = [];
@@ -209,7 +214,8 @@ export function applyOps(src: Rgb, ops: ImageOp[], regions: Region[]): OpsResult
       img = crop(img, cx0, cy0, cx1, cy1);
       t = then(t, { a: 1, b: 0, c: 0, d: 1, e: -cx0, f: -cy0 });
     } else if (op.kind === "outline") {
-      const w = op.width > 0 ? op.width : autoLineWidth(img);
+      const full = op.width > 0 ? op.width : autoLineWidth({ width: img.width / scale, height: img.height / scale });
+      const w = scale === 1 ? full : Math.max(1, Math.round(full * scale));
       // drawn just outside the area, so the line never covers what is being judged
       img = drawRectangle(img, x0 - w, y0 - w, x1 - 1 + w, y1 - 1 + w, w, hexToRgb(op.color));
     } else if (op.kind === "spotlight") {
@@ -217,6 +223,41 @@ export function applyOps(src: Rgb, ops: ImageOp[], regions: Region[]): OpsResult
     }
   }
   return { image: img, warnings };
+}
+
+/** The size of the image after the operations, without touching pixels (only crops and turns change it). */
+export function opsSize(width: number, height: number, ops: ImageOp[], regions: Region[]): [number, number] {
+  const src = { width, height };
+  let img = { width, height };
+  let t = IDENTITY;
+  for (const op of ops) {
+    if (op.kind === "rotate") {
+      const k = (op.degrees / 90) as 1 | 2 | 3;
+      t = then(t, rotateTransform(k, img.width, img.height));
+      if (k !== 2) img = { width: img.height, height: img.width };
+      continue;
+    }
+    if (op.kind !== "crop") continue;
+    const box = resolveArea(op.area, regions);
+    if (!box) continue;
+    const [x0, y0, x1, y1] = pixelBox(box, src, t, img);
+    const mx = (x1 - x0) * op.margin;
+    const my = (y1 - y0) * op.margin;
+    const cx0 = Math.max(0, Math.floor(x0 - mx));
+    const cy0 = Math.max(0, Math.floor(y0 - my));
+    img = { width: Math.min(img.width, Math.ceil(x1 + mx)) - cx0, height: Math.min(img.height, Math.ceil(y1 + my)) - cy0 };
+    t = then(t, { a: 1, b: 0, c: 0, d: 1, e: -cx0, f: -cy0 });
+  }
+  return [img.width, img.height];
+}
+
+/**
+ * Size of an image enlarged so its longest side is exactly maxSide, the other side rounded half up. Defined
+ * explicitly (not with Python's round, which rounds half to even) so the reference pipeline computes the same.
+ */
+export function enlargedSize(width: number, height: number, maxSide: number): [number, number] {
+  if (width >= height) return [maxSide, Math.max(1, Math.floor((height * maxSide) / width + 0.5))];
+  return [Math.max(1, Math.floor((width * maxSide) / height + 0.5)), maxSide];
 }
 
 /** Plain-language summary of a view, for captions and lists. */

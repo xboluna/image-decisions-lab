@@ -699,3 +699,31 @@ test("every view can be deleted, which goes back to sending the whole image", as
   await expect(promptStep).toContainText(before);
   await expect(train(page).getByText("All 27 answers already cached")).toBeVisible();
 });
+
+test("Escape closes the crop editor even after the page under it re-renders", async ({ page }) => {
+  await open(page);
+  await train(page).locator("[data-grid-scroll] button:has(img)").first().click();
+  await page.getByRole("dialog").getByRole("button", { name: "Crop & add…" }).click();
+  await expect(page.locator("[data-image-editor]")).toBeVisible();
+  // resizing re-renders the panels under both dialogs (and hands the image viewer a new onClose)
+  await page.setViewportSize({ width: 1400, height: 950 });
+  await page.waitForTimeout(300);
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.waitForTimeout(300);
+  await page.keyboard.press("Escape");
+  await expect(page.locator("[data-image-editor]")).toHaveCount(0);
+  await expect(page.getByRole("dialog").getByText("Model answer")).toBeVisible();
+});
+
+test("a view with only a caption is shown as a saved view, not as the whole image", async ({ page }) => {
+  await open(page);
+  const section = page.locator("[data-views-section]");
+  await section.getByRole("button", { name: "Add views" }).click();
+  await page.getByLabel("Caption for view 1").fill("Look only at the left half.");
+  await page.getByLabel("Enlarge view 1").check();
+  await page.getByRole("button", { name: "Save views" }).click();
+  await expect(section).toContainText("“Look only at the left half.”");
+  await expect(section).toContainText("enlarged");
+  await expect(section.getByRole("button", { name: "Edit views" })).toBeVisible();
+  await expect(train(page).getByText(/Showing results from an earlier version/)).toBeVisible();
+});
