@@ -85,6 +85,7 @@ export function Header() {
   const [menu, setMenu] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [includeImages, setIncludeImages] = useState(true);
+  const [exportAdvanced, setExportAdvanced] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const setBundleImportOpen = useStore((s) => s.setBundleImportOpen);
   const advancedMetrics = useStore((s) => s.settings.advancedMetrics);
@@ -236,7 +237,7 @@ export function Header() {
                 if (!exp.prompt || !hash) return;
                 setBusy(true);
                 try {
-                  await exportExperiment({ prompt: exp.prompt, promptHash: hash, model, mapping: exp.mapping, focus: exp.focus, threshold: exp.threshold, train: exp.train, test: exp.test, trainDataset: train, testDataset: test, includeImages });
+                  await exportExperiment({ prompt: exp.prompt, promptHash: hash, model, mapping: exp.mapping, focus: exp.focus, threshold: exp.threshold, train: exp.train, test: exp.test, trainDataset: train, testDataset: test, includeImages, advancedMetrics: exportAdvanced ?? advancedMetrics });
                   setExportOpen(false);
                 } finally {
                   setBusy(false);
@@ -268,6 +269,13 @@ export function Header() {
         <label className="mt-3 flex items-center gap-2 text-[12.5px]">
           <input type="checkbox" checked={includeImages} onChange={(e) => setIncludeImages(e.target.checked)} className="accent-[var(--accent)]" />
           Include dataset images (needed to import the experiment again)
+        </label>
+        <label className="mt-2 flex items-start gap-2 text-[12.5px]">
+          <input type="checkbox" checked={exportAdvanced ?? advancedMetrics} onChange={(e) => setExportAdvanced(e.target.checked)} className="mt-0.5 accent-[var(--accent)]" aria-label="Include advanced metrics" />
+          <span>
+            Include advanced metrics
+            <span className="block text-[11.5px] text-muted">AUROC, cross-validated and macro balanced accuracy, in metrics.json and experiment.json</span>
+          </span>
         </label>
         {(exp.train?.stale || exp.test?.stale) && <p className="mt-2 rounded-lg bg-warning-wash px-2.5 py-1.5 text-[12px] text-warning-ink">Some results shown are from an earlier prompt version; the export marks them as stale.</p>}
       </Modal>
