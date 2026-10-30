@@ -3,6 +3,7 @@ import JSZip from "jszip";
 import { db } from "./db";
 import { sha256Bytes, uid } from "./hash";
 import { imageSize, mimeFor, resizeJpeg } from "./image";
+import type { ImageOp, ImageView, Region } from "./ops";
 import type { Prompt, PromptExample } from "./types";
 
 type PromptFile = {
@@ -13,7 +14,9 @@ type PromptFile = {
   target?: { key: string; type: "boolean" | "categorical" };
   question?: { instructions: string; criteria: Record<string, string> };
   image?: { max_side?: number };
-  examples?: { file: string; source_file?: string; sha256: string; label: boolean | string; caption: string }[];
+  examples?: { file: string; source_file?: string; sha256: string; label: boolean | string; caption: string; ops?: ImageOp[] }[];
+  regions?: Region[];
+  views?: ImageView[];
 };
 
 /** Reads a prompt zip made by "Download prompt": prompt.json plus its reference images. Returns a new prompt. */
@@ -42,7 +45,7 @@ export async function importPromptZip(file: Blob, existingNames: string[]): Prom
     const blob = new Blob([bytes as BlobPart], { type: mimeFor(e.file) });
     await imageSize(blob);
     if (!(await db.hasImage(imageHash))) await db.putImage(imageHash, blob, (await resizeJpeg(blob, 384, 0.8)).blob);
-    examples.push({ id: uid("ex"), imageHash, fileName: e.source_file ?? e.file.split("/").pop() ?? e.file, label: e.label, caption: e.caption ?? "" });
+    examples.push({ id: uid("ex"), imageHash, fileName: e.source_file ?? e.file.split("/").pop() ?? e.file, label: e.label, caption: e.caption ?? "", ...(e.ops?.length ? { ops: e.ops } : {}) });
   }
   const r = data.restore;
   const base = r ?? {
@@ -67,6 +70,8 @@ export async function importPromptZip(file: Blob, existingNames: string[]): Prom
     instructions: base.instructions,
     criteria: base.criteria,
     imageMaxSide: base.imageMaxSide ?? 1024,
+    regions: r?.regions ?? data.regions ?? [],
+    views: r?.views ?? data.views ?? [],
     examples,
   };
   return { prompt, warnings };

@@ -3,34 +3,52 @@ import { db } from "./db";
 import { blobToDataUrl } from "./image";
 import { modelInfo } from "./models";
 import { answerProbabilities, decide } from "./openrouter";
-import { buildQuestion, buildState, inferenceKey, JPEG_QUALITY, questionId } from "./prompt";
+import type { Decoded } from "./decodeImage";
+import type { ImageView } from "./ops";
+import { buildQuestion, buildState, exampleViews, imagesPerRequest, inferenceKey, JPEG_QUALITY, promptViews, questionId } from "./prompt";
 import type { Dataset, Inference, LabelSchema, Prompt } from "./types";
 
 export type RunProgress = { done: number; total: number; cached: number; errors: number; costUsd: number };
 
 export function imageCount(prompt: Prompt): number {
-  return prompt.examples.length + 1;
+  return imagesPerRequest(prompt);
 }
 
 export function imageLimitProblem(prompt: Prompt, model: string): string | null {
   const max = modelInfo(model)?.maxImages;
   if (max && imageCount(prompt) > max) {
-    return `${model} accepts at most ${max} images per request; this prompt sends ${imageCount(prompt)} (${prompt.examples.length} examples + the image). Remove examples or pick another model.`;
+    return `${model} accepts at most ${max} images per request; this prompt sends ${imageCount(prompt)}. Remove examples or views, or pick another model.`;
   }
   return null;
 }
 
-/** The exact JPEG the model is sent for a stored image (lib/modelImage.ts; Pillow-identical). */
-export async function modelJpeg(hash: string, maxSide: number) {
-  const blob = await db.getImage(hash);
-  if (!blob) throw new Error("An image is missing from this browser's storage. Re-import the dataset.");
-  // Loaded on first use so the WebAssembly decoder stays out of the initial page.
-  const { encodeForModel } = await import("./modelImage");
-  return encodeForModel(new Uint8Array(await blob.arrayBuffer()), maxSide, JPEG_QUALITY);
+/** Decoded source images, kept for one run so several views of one image decode it once. */
+type DecodedCache = Map<string, Promise<Decoded>>;
+
+function source(hash: string, cache: DecodedCache): Promise<Decoded> {
+  let p = cache.get(hash);
+  if (!p) {
+    p = (async () => {
+      const blob = await db.getImage(hash);
+      if (!blob) throw new Error("An image is missing from this browser's storage. Re-import the dataset.");
+      // Loaded on first use so the WebAssembly decoder stays out of the initial page.
+      const { decodeToRgb } = await import("./decodeImage");
+      return decodeToRgb(new Uint8Array(await blob.arrayBuffer()));
+    })();
+    cache.set(hash, p);
+  }
+  return p;
 }
 
-async function encode(hash: string, maxSide: number): Promise<string> {
-  const { jpeg } = await modelJpeg(hash, maxSide);
+/** The exact JPEG the model is sent for one view of a stored image (lib/modelImage.ts; Pillow-identical). */
+export async function modelJpeg(hash: string, view: ImageView, prompt: Prompt, cache: DecodedCache = new Map()) {
+  const { renderView } = await import("./modelImage");
+  return renderView(await source(hash, cache), { ops: view.ops, regions: prompt.regions ?? [], enlarge: view.enlarge }, prompt.imageMaxSide, JPEG_QUALITY);
+}
+
+/** One view of an image, as the JPEG data URL sent to the model. */
+async function encodeView(hash: string, view: ImageView, prompt: Prompt, cache: DecodedCache): Promise<string> {
+  const { jpeg } = await modelJpeg(hash, view, prompt, cache);
   return blobToDataUrl(new Blob([jpeg as BlobPart], { type: "image/jpeg" }));
 }
 
@@ -72,8 +90,10 @@ export async function runInference(opts: {
   if (!todo.length) return progress;
   if (!opts.apiKey) throw new Error("Add an OpenRouter API key in Settings to score images that are not cached yet.");
 
-  let exampleUrls: string[] | null = null;
-  const examples = async () => (exampleUrls ??= await Promise.all(prompt.examples.map((e) => encode(e.imageHash, prompt.imageMaxSide))));
+  const decoded: DecodedCache = new Map();
+  let exampleUrls: string[][] | null = null;
+  const examples = async () =>
+    (exampleUrls ??= await Promise.all(prompt.examples.map((e) => Promise.all(exampleViews(e).map((v) => encodeView(e.imageHash, v, prompt, decoded))))));
   await examples();
 
   let next = 0;
@@ -84,7 +104,9 @@ export async function runInference(opts: {
       const item = dataset.items[i];
       let inference: Inference;
       try {
-        const target = await encode(item.imageHash, prompt.imageMaxSide);
+        // A per-image cache, so one image's views share a decode without holding every image in memory.
+        const targetDecoded: DecodedCache = new Map();
+        const target = await Promise.all(promptViews(prompt).map((v) => encodeView(item.imageHash, v, prompt, targetDecoded)));
         const state = buildState(prompt, await examples(), target);
         const result = await decide({ apiKey: opts.apiKey, model, state, questionId: qid, question, signal: opts.signal });
         const probabilities = result.ok && result.answer ? answerProbabilities(result.answer, prompt.targetType, classes) : null;

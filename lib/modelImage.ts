@@ -9,9 +9,10 @@
  * enough: the browser must send what a production Python harness sends.
  */
 
-import { decodeToRgb } from "./decodeImage.ts";
+import { decodeToRgb, type Decoded } from "./decodeImage.ts";
 import { encodeJpeg } from "./jpegEncoder.ts";
-import { thumbnail } from "./pillow.ts";
+import { applyOps, enlargedSize, type ImageOp, type Region } from "./ops.ts";
+import { resample, thumbnail } from "./pillow.ts";
 
 export type ModelImage = {
   jpeg: Uint8Array;
@@ -21,8 +22,20 @@ export type ModelImage = {
   exact: boolean;
 };
 
-export async function encodeForModel(bytes: Uint8Array, maxSide: number, quality: number): Promise<ModelImage> {
-  const { image, exact, comment } = await decodeToRgb(bytes);
-  const resized = thumbnail(image, maxSide);
-  return { jpeg: encodeJpeg(resized, quality, comment), width: resized.width, height: resized.height, exact };
+export async function encodeForModel(bytes: Uint8Array, maxSide: number, quality: number, view: ViewSpec = { ops: [], regions: [], enlarge: false }): Promise<ModelImage> {
+  return renderView(await decodeToRgb(bytes), view, maxSide, quality);
+}
+
+export type ViewSpec = { ops: ImageOp[]; regions: Region[]; enlarge: boolean };
+
+/**
+ * One view of an already decoded image: its operations on the full-resolution pixels, then Pillow's thumbnail (or,
+ * for `enlarge` when the result is smaller than maxSide, Image.resize to enlargedSize with BICUBIC), then the JPEG.
+ * reference_pipeline.py `view_jpeg` is the Pillow equivalent.
+ */
+export function renderView(decoded: Decoded, view: ViewSpec, maxSide: number, quality: number): ModelImage {
+  const { image } = applyOps(decoded.image, view.ops, view.regions);
+  const longest = Math.max(image.width, image.height);
+  const sized = view.enlarge && longest < maxSide ? resample(image, ...enlargedSize(image.width, image.height, maxSide)) : thumbnail(image, maxSide);
+  return { jpeg: encodeJpeg(sized, quality, decoded.comment), width: sized.width, height: sized.height, exact: decoded.exact };
 }

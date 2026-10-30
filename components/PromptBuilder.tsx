@@ -2,18 +2,19 @@
 import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { AlertTriangle, Check, ChevronDown, Copy, Download, Eye, FileText, GripVertical, ImagePlus, Images, Plus, Trash2, Undo2, Upload, X } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, Copy, Crop as CropIcon, Download, Eye, FileText, GripVertical, ImagePlus, Images, Layers, Plus, Trash2, Undo2, Upload, X } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { db } from "@/lib/db";
 import { exportPrompt } from "@/lib/export";
 import { sha256Bytes } from "@/lib/hash";
 import { imageSize, resizeJpeg } from "@/lib/image";
 import { modelInfo } from "@/lib/models";
-import { promptProblems } from "@/lib/prompt";
+import { imagesPerRequest, promptProblems, promptViews } from "@/lib/prompt";
 import { importPromptZip } from "@/lib/promptImport";
 import { useStore } from "@/lib/store";
 import type { Dataset, LabelSchema, Prompt, PromptExample } from "@/lib/types";
 import { classColor } from "./colors";
+import { ImageEditor, OpsThumb, useRgb, ViewPreview, ViewsEditor, viewSummary } from "./ImageViews";
 import { StoredImage } from "./StoredImage";
 import { Badge, Button, Card, cx, Field, HashChip, IconButton, inputClass, MenuItem, Modal, Popover, Segmented } from "./ui";
 
@@ -156,6 +157,8 @@ function ExampleRow({ example, index, prompt, schema }: { example: PromptExample
   const removeExample = useStore((s) => s.removeExample);
   const target = schema ? (schema.type === "boolean" ? ({ type: "boolean" } as const) : ({ type: "categorical", classes: schema.classes } as const)) : null;
   const badLabel = schema?.type === "categorical" && !schema.classes.includes(String(example.label));
+  const [editing, setEditing] = useState(false);
+  const edited = !!example.ops?.length;
   return (
     <li
       ref={setNodeRef}
@@ -165,11 +168,40 @@ function ExampleRow({ example, index, prompt, schema }: { example: PromptExample
       <button type="button" className="flex w-5 shrink-0 cursor-grab touch-none items-center justify-center rounded text-muted hover:bg-surface-3 hover:text-ink active:cursor-grabbing" aria-label={`Reorder example ${index + 1}`} {...attributes} {...listeners}>
         <GripVertical className="size-4" />
       </button>
-      <div className="relative h-[62px] w-[92px] shrink-0 overflow-hidden rounded-lg bg-surface-3">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <StoredImage hash={example.imageHash} alt={example.fileName} className="size-full object-cover" />
+      <div className="group/thumb relative h-[62px] w-[92px] shrink-0 overflow-hidden rounded-lg bg-surface-3">
+        {edited ? (
+          <OpsThumb hash={example.imageHash} ops={example.ops!} regions={prompt.regions ?? []} alt={`${example.fileName}, edited`} className="size-full object-contain" />
+        ) : (
+          <StoredImage hash={example.imageHash} alt={example.fileName} className="size-full object-cover" />
+        )}
         <span className="absolute left-1 top-1 rounded bg-black/60 px-1 text-[10px] font-semibold text-white tabular">#{index + 1}</span>
+        {edited && <span className="absolute bottom-1 left-1 rounded bg-black/60 px-1 text-[10px] font-medium text-white">edited</span>}
+        <button
+          type="button"
+          aria-label={`Edit image of example ${index + 1}`}
+          title="Crop, outline or spotlight this example"
+          onClick={() => setEditing(true)}
+          className="absolute bottom-1 right-1 inline-flex size-6 items-center justify-center rounded-md bg-black/60 text-white opacity-80 transition-opacity hover:opacity-100 group-hover/thumb:opacity-100"
+        >
+          <CropIcon className="size-3.5" />
+        </button>
       </div>
+      {editing && (
+        <ImageEditor
+          hash={example.imageHash}
+          name={example.fileName}
+          initialOps={example.ops ?? []}
+          regions={prompt.regions ?? []}
+          maxSide={prompt.imageMaxSide}
+          title={`Edit example ${index + 1}`}
+          saveLabel="Save edits"
+          onSave={(ops) => {
+            updateExample(example.id, { ops: ops.length ? ops : undefined });
+            setEditing(false);
+          }}
+          onClose={() => setEditing(false)}
+        />
+      )}
       <div className="min-w-0 flex-1 space-y-1.5">
         <div className="flex flex-wrap items-center gap-1.5">
           {prompt.targetType === "boolean" ? (
@@ -290,6 +322,70 @@ function PickerTile({ hash, name, label, color, boolean, used, onAdd }: { hash: 
   );
 }
 
+/** The prompt's image views: a one-line summary each, previews on a training image, and the editor. */
+function ImageViewsSection({ prompt, samples, model, readOnly }: { prompt: Prompt; samples: { hash: string; name: string }[]; model: string; readOnly: boolean }) {
+  const updatePrompt = useStore((s) => s.updatePrompt);
+  const [open, setOpen] = useState(false);
+  const rgb = useRgb(samples[0]?.hash);
+  const views = promptViews(prompt);
+  // Anything saved that changes the request counts: operations, captions, Enlarge, extra views, or regions.
+  const custom = views.length > 1 || views.some((v) => v.ops.length || v.caption.trim() || v.enlarge) || !!prompt.regions?.length;
+  const unusedRegions = (prompt.regions ?? []).filter((r) => !views.some((v) => v.ops.some((o) => "area" in o && "region" in o.area && o.area.region === r.id)));
+  return (
+    <div className="rounded-xl border border-line bg-surface-2 p-3" data-views-section>
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[12px] font-medium text-ink-2">
+          Image views <span className="font-normal text-muted">· what the model sees of each image</span>
+        </span>
+        <Button size="sm" icon={<Layers className="size-3.5" />} onClick={() => setOpen(true)} disabled={readOnly || !samples.length} title={samples.length ? undefined : "Add a training dataset to edit views on its images"}>
+          {custom ? "Edit views" : "Add views"}
+        </Button>
+      </div>
+      {custom ? (
+        <>
+          <ol className="mt-2 space-y-0.5 text-[12px] text-ink">
+            {viewSummary(prompt).map((line, i) => (
+              <li key={i} className="min-w-0">
+                <span className="block truncate">
+                  {line}
+                  {views[i]?.enlarge && <span className="text-muted"> · enlarged</span>}
+                </span>
+                {views[i]?.caption.trim() && <span className="block truncate text-[11.5px] text-ink-2">“{views[i].caption.trim()}”</span>}
+              </li>
+            ))}
+          </ol>
+          {unusedRegions.length > 0 && (
+            <div className="mt-1 text-[11.5px] text-muted">
+              {unusedRegions.length} region{unusedRegions.length === 1 ? "" : "s"} not used by any view: {unusedRegions.map((r) => r.name).join(", ")}
+            </div>
+          )}
+          {rgb && (
+            <div className={cx("mt-2 grid gap-2", views.length > 1 ? "grid-cols-2" : "grid-cols-1")}>
+              {views.map((v, i) => (
+                <ViewPreview key={v.id} rgb={rgb} ops={v.ops} regions={prompt.regions ?? []} maxSide={prompt.imageMaxSide} enlarge={v.enlarge} title={views.length > 1 ? `View ${i + 1}` : "Sent as"} compact />
+              ))}
+            </div>
+          )}
+        </>
+      ) : (
+        <p className="mt-1 text-[12px] text-muted">The whole image, once. Add views to crop in on an object, outline or spotlight it, or send several views of each image.</p>
+      )}
+      {open && (
+        <ViewsEditor
+          prompt={prompt}
+          samples={samples}
+          model={model}
+          onClose={() => setOpen(false)}
+          onSave={(d) => {
+            updatePrompt(prompt.id, d);
+            setOpen(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
 export function PromptBuilder() {
   const selected = useStore((s) => s.prompts.find((p) => p.id === s.selection.prompt));
   const selectedHash = useStore((s) => (selected ? s.promptHashes[selected.id] : undefined));
@@ -356,7 +452,7 @@ export function PromptBuilder() {
   }
 
   const criteriaKeys = prompt.targetType === "boolean" ? ["true", "false"] : schema?.type === "categorical" ? schema.classes : Object.keys(prompt.criteria);
-  const imageCount = prompt.examples.length + 1;
+  const imageCount = imagesPerRequest(prompt);
 
   return (
     <Card className="p-4 sm:p-5" aria-label="Prompt builder" data-panel="prompt">
@@ -509,6 +605,8 @@ export function PromptBuilder() {
           </label>
 
         </div>
+
+        <ImageViewsSection prompt={prompt} samples={train?.items.slice(0, 200).map((i) => ({ hash: i.imageHash, name: i.fileName })) ?? []} model={model} readOnly={!!peek} />
 
         {problems.length > 0 && (
           <div className="flex gap-2 rounded-xl bg-critical-wash px-3 py-2.5 text-[12.5px] text-critical-ink">
