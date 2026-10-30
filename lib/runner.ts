@@ -1,30 +1,45 @@
 "use client";
 import { db } from "./db";
-import { blobToDataUrl, resizeJpeg } from "./image";
+import { blobToDataUrl, decodeRgb, encodeRgb } from "./image";
 import { modelInfo } from "./models";
 import { answerProbabilities, decide } from "./openrouter";
-import { buildQuestion, buildState, inferenceKey, JPEG_QUALITY, questionId } from "./prompt";
+import { applyOps, type ImageView, type Rgb } from "./ops";
+import { buildQuestion, buildState, exampleViews, imagesPerRequest, inferenceKey, JPEG_QUALITY, promptViews, questionId } from "./prompt";
 import type { Dataset, Inference, LabelSchema, Prompt } from "./types";
 
 export type RunProgress = { done: number; total: number; cached: number; errors: number; costUsd: number };
 
 export function imageCount(prompt: Prompt): number {
-  return prompt.examples.length + 1;
+  return imagesPerRequest(prompt);
 }
 
 export function imageLimitProblem(prompt: Prompt, model: string): string | null {
   const max = modelInfo(model)?.maxImages;
   if (max && imageCount(prompt) > max) {
-    return `${model} accepts at most ${max} images per request; this prompt sends ${imageCount(prompt)} (${prompt.examples.length} examples + the image). Remove examples or pick another model.`;
+    return `${model} accepts at most ${max} images per request; this prompt sends ${imageCount(prompt)}. Remove examples or views, or pick another model.`;
   }
   return null;
 }
 
-async function encode(hash: string, maxSide: number): Promise<string> {
-  const blob = await db.getImage(hash);
-  if (!blob) throw new Error("An image is missing from this browser's storage. Re-import the dataset.");
-  const { blob: jpeg } = await resizeJpeg(blob, maxSide, JPEG_QUALITY);
-  return blobToDataUrl(jpeg);
+/** Decoded source images, kept for one run so several views of one image decode it once. */
+type Decoded = Map<string, Promise<Rgb>>;
+
+function source(hash: string, cache: Decoded): Promise<Rgb> {
+  let p = cache.get(hash);
+  if (!p) {
+    p = db.getImage(hash).then((blob) => {
+      if (!blob) throw new Error("An image is missing from this browser's storage. Re-import the dataset.");
+      return decodeRgb(blob);
+    });
+    cache.set(hash, p);
+  }
+  return p;
+}
+
+/** One view of an image, as the JPEG data URL sent to the model. */
+export async function encodeView(hash: string, view: ImageView, prompt: Prompt, cache: Decoded = new Map()): Promise<string> {
+  const { image } = applyOps(await source(hash, cache), view.ops, prompt.regions ?? []);
+  return blobToDataUrl(await encodeRgb(image, prompt.imageMaxSide, JPEG_QUALITY, view.enlarge));
 }
 
 /**
@@ -65,8 +80,10 @@ export async function runInference(opts: {
   if (!todo.length) return progress;
   if (!opts.apiKey) throw new Error("Add an OpenRouter API key in Settings to score images that are not cached yet.");
 
-  let exampleUrls: string[] | null = null;
-  const examples = async () => (exampleUrls ??= await Promise.all(prompt.examples.map((e) => encode(e.imageHash, prompt.imageMaxSide))));
+  const decoded: Decoded = new Map();
+  let exampleUrls: string[][] | null = null;
+  const examples = async () =>
+    (exampleUrls ??= await Promise.all(prompt.examples.map((e) => Promise.all(exampleViews(e).map((v) => encodeView(e.imageHash, v, prompt, decoded))))));
   await examples();
 
   let next = 0;
@@ -77,7 +94,9 @@ export async function runInference(opts: {
       const item = dataset.items[i];
       let inference: Inference;
       try {
-        const target = await encode(item.imageHash, prompt.imageMaxSide);
+        // A per-image cache, so one image's views share a decode without holding every image in memory.
+        const targetDecoded: Decoded = new Map();
+        const target = await Promise.all(promptViews(prompt).map((v) => encodeView(item.imageHash, v, prompt, targetDecoded)));
         const state = buildState(prompt, await examples(), target);
         const result = await decide({ apiKey: opts.apiKey, model, state, questionId: qid, question, signal: opts.signal });
         const probabilities = result.ok && result.answer ? answerProbabilities(result.answer, prompt.targetType, classes) : null;

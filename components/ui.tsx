@@ -119,15 +119,27 @@ export function HashChip({ hash, prefix, title, className }: { hash: string | un
   );
 }
 
+const modalStack: object[] = [];
+
 export function Modal({ open, onClose, title, subtitle, children, footer, width = "max-w-2xl" }: { open: boolean; onClose: () => void; title: ReactNode; subtitle?: ReactNode; children: ReactNode; footer?: ReactNode; width?: string }) {
+  const token = useRef({});
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    // Dialogs can open on top of each other; Escape closes only the topmost one.
+    const me = token.current;
+    modalStack.push(me);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && modalStack[modalStack.length - 1] === me) {
+        e.stopImmediatePropagation();
+        onClose();
+      }
+    };
     window.addEventListener("keydown", onKey);
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       window.removeEventListener("keydown", onKey);
+      modalStack.splice(modalStack.indexOf(me), 1);
       document.body.style.overflow = prev;
     };
   }, [open, onClose]);

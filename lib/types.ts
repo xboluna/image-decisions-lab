@@ -1,3 +1,5 @@
+import type { ImageOp, ImageView, Region } from "./ops";
+
 /** A label column in a dataset. Boolean labels are yes/no; categorical labels pick one of several classes. */
 export type LabelSchema =
   | { key: string; type: "boolean"; description?: string }
@@ -36,6 +38,8 @@ export type PromptExample = {
   caption: string;
   /** For a boolean target: true (positive) or false (negative). For a categorical target: the class. */
   label: boolean | string;
+  /** Edits of this example's image (e.g. a crop cut from a training image). When set, the prompt's views are not applied. */
+  ops?: ImageOp[];
 };
 
 export type Prompt = {
@@ -53,6 +57,10 @@ export type Prompt = {
   examples: PromptExample[];
   /** Longest image side, in pixels, of every JPEG sent to the model (examples and the evaluated image). */
   imageMaxSide: number;
+  /** Named areas of the image (normalized coordinates) that operations can refer to. */
+  regions?: Region[];
+  /** The images sent for each image under evaluation, in order. Missing or empty: the whole image, once. */
+  views?: ImageView[];
 };
 
 export type ContentPart = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } };

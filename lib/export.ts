@@ -5,7 +5,7 @@ import { db } from "./db";
 import { shortHash } from "./hash";
 import { manifestJsonl } from "./manifest";
 import { ALL } from "./metrics";
-import { buildQuestion, buildState, questionId, STATE_TEMPLATE_VERSION, JPEG_QUALITY } from "./prompt";
+import { buildQuestion, buildState, exampleViews, promptViews, questionId, STATE_TEMPLATE_VERSION, JPEG_QUALITY } from "./prompt";
 import type { ClassMapping, Dataset, Prompt } from "./types";
 
 export const TOOL = { name: "Image Decisions Lab", version: "0.1.0" };
@@ -82,11 +82,18 @@ export function promptRecord(prompt: Prompt, hash: string) {
     target: { key: prompt.targetKey, type: prompt.targetType },
     question_id: questionId(prompt),
     question: buildQuestion(prompt),
-    examples: prompt.examples.map((e, i) => ({ file: examplePath(i, e.fileName), source_file: e.fileName, sha256: e.imageHash, label: e.label, caption: e.caption })),
+    examples: prompt.examples.map((e, i) => ({ file: examplePath(i, e.fileName), source_file: e.fileName, sha256: e.imageHash, label: e.label, caption: e.caption, ...(e.ops?.length ? { ops: e.ops } : {}) })),
+    // Image operations, in the order they run; areas are fractions of the original image (x0, y0, x1, y1).
+    regions: prompt.regions ?? [],
+    views: promptViews(prompt),
     /** The exact request body sent per image, with images written as references. */
     request_preview: {
       model: "<model>",
-      state: buildState(prompt, prompt.examples.map((e, i) => `<${examplePath(i, e.fileName)} as JPEG data URL>`), "<image under evaluation as JPEG data URL>"),
+      state: buildState(
+        prompt,
+        prompt.examples.map((e, i) => exampleViews(e).map((v, k, all) => `<${examplePath(i, e.fileName)}${all.length > 1 || v.ops.length ? ` view ${k + 1}` : ""} as JPEG data URL>`)),
+        promptViews(prompt).map((v, k, all) => `<image under evaluation${all.length > 1 || v.ops.length ? `, view ${k + 1}` : ""} as JPEG data URL>`),
+      ),
       questions: { [questionId(prompt)]: buildQuestion(prompt) },
     },
     updated_at: prompt.updatedAt,

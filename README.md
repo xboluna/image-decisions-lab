@@ -13,6 +13,15 @@ local storage. Model calls go straight from the browser to `openrouter.ai`. Ther
    content hash over its images, labels and label schema.
 2. **Prompt.** Write the system prompt, pick the label to classify, phrase the question and its criteria, and add
    reference images (positive/negative for yes/no labels, a class for class labels).
+   **Image views** (bottom of the prompt) decide what the model sees of each image: draw regions on a sample
+   training image, then build one or more views from operations applied in order: **crop** (with a margin of
+   context), **outline** (a frame drawn just outside an area), **spotlight** (darken everything else) and
+   **rotate**. Regions are fractions of the image, so the same crop lands on the same object in every image
+   from a fixed camera. Each view is sent as its own image with an optional caption; presets cover "crop to the
+   region", "outline it" and "whole image + framed close-up". Reference examples can be edited the same way
+   (the crop icon on each example), and **Crop & add** in the image viewer cuts a new example from any training
+   image. Edits are stored as operations on the original image, included in the prompt hash, and exported and
+   imported with the prompt.
 3. **Settings.** Paste an OpenRouter key (checked against `/api/v1/key`, which shows the spending limit) and pick
    a decision model. The key is saved client-side, and never goes anywhere.
 4. **Score the training set.** Accuracy, balanced accuracy, the score histogram, precision-recall curves and the
