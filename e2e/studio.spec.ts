@@ -1104,3 +1104,29 @@ test("saved answers follow their dataset when roles are swapped, and the same zi
   await expect(fresh.locator('[data-panel="test"]').getByText("All 27 answers already cached")).toBeVisible();
   await fresh.context().close();
 });
+
+test("with Restore unchecked, nothing is restored", async ({ page, browser }) => {
+  await open(page);
+  await page.getByRole("button", { name: "Export experiment" }).click();
+  const dl = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download zip" }).click();
+  const file = { name: "experiment.zip", mimeType: "application/zip", buffer: readFileSync(await (await dl).path()) };
+  const fresh = await (await browser.newContext({ viewport: { width: 1600, height: 1000 } })).newPage();
+  await fresh.route("**/demo/seed.json", (r) => r.fulfill({ status: 404, body: "" }));
+  await fresh.goto("/");
+  await fresh.locator('[data-panel="train"]').getByRole("button", { name: "Import experiment" }).click();
+  const dialog = fresh.getByRole("dialog");
+  await dialog.getByLabel("Experiment zip").setInputFiles(file);
+  const plan = dialog.locator("[data-bundle-plan] li");
+  // skipping the test set leaves the training answers restorable; unchecking Restore must restore nothing
+  await plan.filter({ hasText: "datasets/test/" }).getByRole("radio", { name: "Skip" }).click();
+  const restore = dialog.getByRole("checkbox", { name: /Restore/ });
+  await expect(restore).toBeChecked();
+  await restore.uncheck();
+  await dialog.getByRole("button", { name: "Import", exact: true }).click();
+  await expect(dialog.locator("[data-bundle-result]")).toContainText("Training set", { timeout: 60_000 });
+  await expect(dialog.locator("[data-bundle-result]")).not.toContainText("Restored");
+  await dialog.getByRole("button", { name: "Done" }).click();
+  await expect(fresh.locator('[data-panel="train"]').getByText(/27 of 27 images need a model call/)).toBeVisible();
+  await fresh.context().close();
+});

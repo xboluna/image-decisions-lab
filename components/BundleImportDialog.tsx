@@ -74,7 +74,7 @@ export function BundleImportDialog() {
     setError(null);
     try {
       const chosen: BundlePlan = { ...plan, datasets: plan.datasets.map((d, i) => ({ ...d, role: roles[i] })), prompt: usePrompt ? plan.prompt : null };
-      const r = await importBundle(chosen, { restoreAnswers: restore, existingPromptNames: useStore.getState().prompts.map((p) => p.name), onProgress: setProgress });
+      const r = await importBundle(chosen, { restoreAnswers: restoreChecked, existingPromptNames: useStore.getState().prompts.map((p) => p.name), onProgress: setProgress });
       await hydrate();
       const s = useStore.getState();
       for (const d of r.datasets) if (d.role !== "skip") s.selectDataset(d.role, d.dataset.id);
@@ -94,7 +94,10 @@ export function BundleImportDialog() {
   }
 
   // Answers can be restored when the exact dataset version they were scored on is being imported, in any role.
-  const restorable = plan?.results.filter((r) => plan.datasets.some((d, i) => roles[i] !== "skip" && d.exportedHash === r.run.dataset_hash.replace(/^sha256:/, ""))) ?? [];
+  // A dataset without a recorded hash may still match once imported (the importer checks the real hash), so it counts.
+  const restorable = plan?.results.filter((r) => plan.datasets.some((d, i) => roles[i] !== "skip" && (!d.exportedHash || d.exportedHash === r.run.dataset_hash.replace(/^sha256:/, "")))) ?? [];
+  // Exactly what the Restore checkbox shows.
+  const restoreChecked = restore && usePrompt && restorable.length > 0;
   const answers = plan?.results.reduce((s, r) => s + r.predictions.filter((p) => p.raw_probabilities && !p.error).length, 0) ?? 0;
   const willImport = plan ? roles.filter((r) => r !== "skip").length + (usePrompt && plan.prompt ? 1 : 0) : 0;
 
@@ -231,7 +234,7 @@ export function BundleImportDialog() {
                   </div>
                 </div>
                 <label className="flex items-center gap-1.5 text-[12.5px]">
-                  <input type="checkbox" checked={restore && usePrompt && restorable.length > 0} onChange={(e) => setRestore(e.target.checked)} className="accent-[var(--accent)]" disabled={!usePrompt || !restorable.length || phase === "importing"} />
+                  <input type="checkbox" checked={restoreChecked} onChange={(e) => setRestore(e.target.checked)} className="accent-[var(--accent)]" disabled={!usePrompt || !restorable.length || phase === "importing"} />
                   Restore
                 </label>
               </li>
