@@ -119,18 +119,33 @@ export function HashChip({ hash, prefix, title, className }: { hash: string | un
   );
 }
 
+const modalStack: object[] = [];
+
 export function Modal({ open, onClose, title, subtitle, children, footer, width = "max-w-2xl" }: { open: boolean; onClose: () => void; title: ReactNode; subtitle?: ReactNode; children: ReactNode; footer?: ReactNode; width?: string }) {
+  const token = useRef({});
+  // The latest onClose, so a parent passing a new function each render never re-registers (and re-stacks) the dialog.
+  const close = useRef(onClose);
+  close.current = onClose;
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    // Dialogs can open on top of each other; Escape closes only the topmost one, in the order they opened.
+    const me = token.current;
+    modalStack.push(me);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && modalStack[modalStack.length - 1] === me) {
+        e.stopImmediatePropagation();
+        close.current();
+      }
+    };
     window.addEventListener("keydown", onKey);
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       window.removeEventListener("keydown", onKey);
+      modalStack.splice(modalStack.indexOf(me), 1);
       document.body.style.overflow = prev;
     };
-  }, [open, onClose]);
+  }, [open]);
   if (!open || typeof document === "undefined") return null;
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 pt-[6vh] backdrop-blur-[2px]" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>

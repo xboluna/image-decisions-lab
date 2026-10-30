@@ -6,7 +6,7 @@ import { sha256Bytes, shortHash } from "./hash";
 import { manifestJsonl } from "./manifest";
 import { pairedRows } from "./compare";
 import { ALL, computeAdvanced } from "./metrics";
-import { buildQuestion, buildState, IMAGE_PIPELINE, JPEG_QUALITY, questionId, STATE_TEMPLATE_VERSION } from "./prompt";
+import { buildQuestion, buildState, exampleViews, IMAGE_PIPELINE, JPEG_QUALITY, promptViews, questionId, STATE_TEMPLATE_VERSION } from "./prompt";
 import { modelJpeg } from "./runner";
 import type { ClassMapping, Dataset, Prompt } from "./types";
 
@@ -95,11 +95,18 @@ export function promptRecord(prompt: Prompt, hash: string) {
     target: { key: prompt.targetKey, type: prompt.targetType },
     question_id: questionId(prompt),
     question: buildQuestion(prompt),
-    examples: prompt.examples.map((e, i) => ({ file: examplePath(i, e.fileName), source_file: e.fileName, sha256: e.imageHash, label: e.label, caption: e.caption })),
+    examples: prompt.examples.map((e, i) => ({ file: examplePath(i, e.fileName), source_file: e.fileName, sha256: e.imageHash, label: e.label, caption: e.caption, ...(e.ops?.length ? { ops: e.ops } : {}) })),
+    // Image operations, in the order they run; areas are fractions of the original image (x0, y0, x1, y1).
+    regions: prompt.regions ?? [],
+    views: promptViews(prompt),
     /** The exact request body sent per image, with images written as references. */
     request_preview: {
       model: "<model>",
-      state: buildState(prompt, prompt.examples.map((e, i) => `<${examplePath(i, e.fileName)} as JPEG data URL>`), "<image under evaluation as JPEG data URL>"),
+      state: buildState(
+        prompt,
+        prompt.examples.map((e, i) => exampleViews(e).map((v, k, all) => `<${examplePath(i, e.fileName)}${all.length > 1 || v.ops.length ? ` view ${k + 1}` : ""} as JPEG data URL>`)),
+        promptViews(prompt).map((v, k, all) => `<image under evaluation${all.length > 1 || v.ops.length ? `, view ${k + 1}` : ""} as JPEG data URL>`),
+      ),
       questions: { [questionId(prompt)]: buildQuestion(prompt) },
     },
     updated_at: prompt.updatedAt,
@@ -112,7 +119,8 @@ async function addPrompt(zip: JSZip, prompt: Prompt, hash: string) {
     const blob = await db.getImage(e.imageHash);
     if (!blob) continue;
     zip.file(examplePath(i, e.fileName), blob);
-    const out = await modelJpeg(e.imageHash, prompt.imageMaxSide);
+    // The example as sent: with its own edits, if any.
+    const out = await modelJpeg(e.imageHash, exampleViews(e)[0], prompt);
     zip.file(sentPath(i, e.fileName), out.jpeg);
     sent.push({ file: sentPath(i, e.fileName), source_file: examplePath(i, e.fileName), sha256: await sha256Bytes(out.jpeg), width: out.width, height: out.height, pixel_exact: out.exact });
   }

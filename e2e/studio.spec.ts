@@ -123,7 +123,7 @@ test("class groups merge classes without new model calls", async ({ page }) => {
   await expect(panel.locator('svg[data-chart="confusion_matrix"] g.cursor-pointer')).toHaveCount(9);
   await panel.getByRole("button", { name: /^Class groups/ }).click();
   await page.getByPlaceholder("New group name, e.g. one_or_more").fill("one_or_more");
-  await page.getByRole("button", { name: "Add" }).click();
+  await page.getByRole("button", { name: "Add", exact: true }).click();
   for (const c of ["1", "2"]) await page.getByRole("combobox", { name: `Group for ${c}` }).selectOption("one_or_more");
   await expect(page.getByText("2 groups scored")).toBeVisible();
   await page.keyboard.press("Escape");
@@ -675,6 +675,173 @@ test("bundle import finds images by file name, and a failed import leaves nothin
   await expect(page.getByRole("dialog").locator("[data-bundle-result]")).toContainText("Bare names · 4 images", { timeout: 30_000 });
 });
 
+async function drawOnStage(page: Page, from: [number, number], to: [number, number]) {
+  const stage = page.locator("[data-box-stage]").first();
+  const bb = (await stage.boundingBox())!;
+  await page.mouse.move(bb.x + bb.width * from[0], bb.y + bb.height * from[1]);
+  await page.mouse.down();
+  await page.mouse.move(bb.x + bb.width * to[0], bb.y + bb.height * to[1], { steps: 8 });
+  await page.mouse.up();
+}
+
+test("image views: draw a region, build views from a preset, and they travel with the prompt", async ({ page }) => {
+  await open(page);
+  const section = page.locator("[data-views-section]");
+  await expect(section).toContainText("The whole image, once.");
+  const promptStep = page.locator("nav[aria-label=Experiment] > div").nth(1);
+  const before = (await promptStep.innerText()).match(/[0-9a-f]{8}/)![0];
+
+  await section.getByRole("button", { name: "Add views" }).click();
+  const editor = page.locator("[data-views-editor]");
+  await expect(editor.locator("[data-box-stage]")).toBeVisible();
+  await drawOnStage(page, [0.3, 0.35], [0.55, 0.75]);
+  await expect(editor.getByLabel("Region name")).toHaveValue("Region 1");
+  await editor.getByLabel("Region name").fill("tube area");
+  await editor.getByRole("button", { name: /Whole image \+ framed close-up/ }).click();
+  await expect(editor.locator("[data-view]")).toHaveCount(2);
+  await expect(editor.locator("[data-sent-previews] [data-view-preview]")).toHaveCount(2);
+  await expect(editor).toContainText("used 3×");
+  // the close-up is enlarged to the prompt's image size
+  await expect(editor.locator("[data-sent-previews] [data-view-preview]").nth(1)).toContainText("1024");
+  await expect(page.getByRole("dialog")).toContainText("5 images per request"); // 3 examples + 2 views
+  await page.getByRole("button", { name: "Save views" }).click();
+
+  await expect(section).toContainText("View 1: Outline tube area");
+  await expect(section).toContainText("View 2: Outline tube area, crop to tube area +50%");
+  await expect(section.locator("[data-view-preview]")).toHaveCount(2);
+  const after = (await promptStep.innerText()).match(/[0-9a-f]{8}/)![0];
+  expect(after).not.toBe(before);
+  await expect(train(page).getByText(/Showing results from an earlier version/)).toBeVisible();
+  await expect(train(page).getByText(/27 of 27 images need a model call/)).toBeVisible();
+
+  // download and import the prompt: the views come back and the hash is identical
+  await page.getByRole("button", { name: "Choose prompt" }).click();
+  const dl = page.waitForEvent("download");
+  await page.getByRole("button", { name: /^Download “50 ml tubes v2”/ }).click();
+  const zipBytes = readFileSync(await (await dl).path());
+  const promptJson = JSON.parse(await (await JSZip.loadAsync(zipBytes)).file("prompt.json")!.async("string"));
+  expect(promptJson.views).toHaveLength(2);
+  expect(promptJson.regions[0].name).toBe("tube area");
+  expect(promptJson.request_preview.state.filter((p: { type: string }) => p.type === "image_url")).toHaveLength(5);
+  await page.getByLabel("Import prompt zip").setInputFiles({ name: "p.zip", mimeType: "application/zip", buffer: zipBytes });
+  await expect(page.getByRole("button", { name: "Choose prompt" })).toContainText("(imported)");
+  await expect(section).toContainText("View 2: Outline tube area, crop to tube area +50%");
+  await expect(promptStep).toContainText(after);
+});
+
+test("reference examples can be cropped, and new ones cut from any training image", async ({ page }) => {
+  await open(page);
+  const examples = page.locator('[data-panel="prompt"] ol > li');
+  await page.getByRole("button", { name: "Edit image of example 1" }).click();
+  const editor = page.locator("[data-image-editor]");
+  await expect(editor.locator("[data-op='crop']")).toHaveCount(1); // starts with a crop to adjust
+  await editor.getByRole("button", { name: "Add edit" }).click();
+  await page.getByRole("button", { name: /^Outline/ }).click();
+  await expect(editor.locator("[data-op]")).toHaveCount(2);
+  await page.getByRole("button", { name: "Save edits" }).click();
+  await expect(examples.first()).toContainText("edited");
+
+  // from the image viewer: cut a new example out of a training image
+  await train(page).locator("[data-grid-scroll] button:has(img)").nth(3).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Crop & add…" }).click();
+  await expect(page.locator("[data-image-editor]")).toBeVisible();
+  await drawOnStage(page, [0.1, 0.1], [0.4, 0.5]);
+  // drawing redraws the starting crop instead of stacking a second one (which would keep only the overlap)
+  await expect(page.locator("[data-image-editor] [data-op='crop']")).toHaveCount(1);
+  await expect(page.locator("[data-image-editor] [data-view-preview]")).toContainText(/\d+×\d+ px/);
+  // Escape closes only the editor, not the image viewer under it
+  await page.keyboard.press("Escape");
+  await expect(page.locator("[data-image-editor]")).toHaveCount(0);
+  await expect(page.getByRole("dialog").getByText("Model answer")).toBeVisible();
+  await page.getByRole("dialog").getByRole("button", { name: "Crop & add…" }).click();
+  await page.getByRole("button", { name: /^Add to prompt as/ }).last().click();
+  await page.keyboard.press("Escape");
+  await expect(examples).toHaveCount(4);
+  await expect(examples.last()).toContainText("edited");
+});
+
+test("views are read-only while an earlier version is on screen", async ({ page }) => {
+  await open(page);
+  await train(page).locator("[data-comparison]").getByRole("button", { name: "See this prompt" }).click();
+  await expect(page.locator("[data-views-section]").getByRole("button", { name: "Add views" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Edit image of example 1" })).toHaveCount(0); // v1 has no examples
+});
+
+test("live: score a small set with two views per image", async ({ page }) => {
+  const key = process.env.OPENROUTER_API_KEY;
+  test.skip(!key, "set OPENROUTER_API_KEY to run live calls");
+  await open(page);
+  await page.getByLabel("OpenRouter API key").fill(key!);
+  await page.getByRole("button", { name: "Save & check" }).click();
+  await expect(page.locator('[data-panel="settings"]').getByText(/Connected · key/)).toBeVisible({ timeout: 20_000 });
+  const zipPath = await demoZip(undefined, 3);
+  await testPanel(page).getByRole("button", { name: "New", exact: true }).click();
+  await page.getByRole("dialog").locator('input[type=file][accept*="zip"]').setInputFiles(zipPath);
+  await page.getByRole("dialog").getByRole("button", { name: /^Import/ }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Done" }).click();
+  await page.locator("[data-views-section]").getByRole("button", { name: "Add views" }).click();
+  await drawOnStage(page, [0.2, 0.2], [0.8, 0.8]);
+  await page.getByRole("button", { name: /Whole image \+ framed close-up/ }).click();
+  await page.getByRole("button", { name: "Save views" }).click();
+  await testPanel(page).getByRole("button", { name: "Score test set" }).click();
+  await expect(testPanel(page).getByText("3 scored")).toBeVisible({ timeout: 120_000 });
+  await testPanel(page).locator("[data-grid-scroll] button:has(img)").first().click();
+  await expect(page.getByRole("dialog").getByText("Input tokens")).toBeVisible();
+});
+
+test("every view can be deleted, which goes back to sending the whole image", async ({ page }) => {
+  await open(page);
+  const section = page.locator("[data-views-section]");
+  // the views section sits at the bottom of the prompt, after the reference examples
+  const examplesY = (await page.locator('[data-panel="prompt"]').getByText("Reference examples").boundingBox())!.y;
+  expect((await section.boundingBox())!.y).toBeGreaterThan(examplesY);
+  const promptStep = page.locator("nav[aria-label=Experiment] > div").nth(1);
+  const before = (await promptStep.innerText()).match(/[0-9a-f]{8}/)![0];
+  await section.getByRole("button", { name: "Add views" }).click();
+  await drawOnStage(page, [0.3, 0.3], [0.6, 0.6]);
+  await page.getByRole("button", { name: /Crop to the region/ }).click();
+  await page.getByRole("button", { name: "Save views" }).click();
+  await expect(section).toContainText("Crop to Region 1");
+  await section.getByRole("button", { name: "Edit views" }).click();
+  await page.getByRole("button", { name: "Remove view 1" }).click();
+  await expect(page.locator("[data-no-views]")).toBeVisible();
+  await expect(page.locator("[data-sent-previews]")).toContainText("The whole image");
+  // with the region also gone, nothing is left that changes the request
+  await page.getByRole("button", { name: "Delete Region 1" }).click();
+  await page.getByRole("button", { name: "Save views" }).click();
+  await expect(section).toContainText("The whole image, once.");
+  await expect(promptStep).toContainText(before);
+  await expect(train(page).getByText("All 27 answers already cached")).toBeVisible();
+});
+
+test("Escape closes the crop editor even after the page under it re-renders", async ({ page }) => {
+  await open(page);
+  await train(page).locator("[data-grid-scroll] button:has(img)").first().click();
+  await page.getByRole("dialog").getByRole("button", { name: "Crop & add…" }).click();
+  await expect(page.locator("[data-image-editor]")).toBeVisible();
+  // resizing re-renders the panels under both dialogs (and hands the image viewer a new onClose)
+  await page.setViewportSize({ width: 1400, height: 950 });
+  await page.waitForTimeout(300);
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.waitForTimeout(300);
+  await page.keyboard.press("Escape");
+  await expect(page.locator("[data-image-editor]")).toHaveCount(0);
+  await expect(page.getByRole("dialog").getByText("Model answer")).toBeVisible();
+});
+
+test("a view with only a caption is shown as a saved view, not as the whole image", async ({ page }) => {
+  await open(page);
+  const section = page.locator("[data-views-section]");
+  await section.getByRole("button", { name: "Add views" }).click();
+  await page.getByLabel("Caption for view 1").fill("Look only at the left half.");
+  await page.getByLabel("Enlarge view 1").check();
+  await page.getByRole("button", { name: "Save views" }).click();
+  await expect(section).toContainText("“Look only at the left half.”");
+  await expect(section).toContainText("enlarged");
+  await expect(section.getByRole("button", { name: "Edit views" })).toBeVisible();
+  await expect(train(page).getByText(/Showing results from an earlier version/)).toBeVisible();
+});
+
 test("advanced metrics are off by default and toggled from the ⋯ menu", async ({ page }) => {
   await open(page);
   await expect(page.locator("[data-advanced-metrics]")).toHaveCount(0);
@@ -699,6 +866,38 @@ test("advanced metrics are off by default and toggled from the ⋯ menu", async 
   // the choice is remembered
   await page.reload();
   await expect(train(page).locator("[data-advanced-metrics]")).toBeVisible({ timeout: 30_000 });
+});
+
+test("previews ignore EXIF orientation, like the images sent", async ({ page }) => {
+  await open(page);
+  // a demo JPEG (1024×640) tagged "rotate 90°" in EXIF: browsers would show it 640×1024, Pillow (and the send path) do not
+  const jpeg = readFileSync(path.join(process.cwd(), "public/demo/train/images/scene0_frame112.jpg"));
+  const tiff = Buffer.from("4d4d002a00000008000101120003000000010006000000000000", "hex");
+  const app1 = Buffer.concat([Buffer.from([0xff, 0xe1, 0x00, 6 + tiff.length + 2]), Buffer.from("Exif\0\0", "binary"), tiff]);
+  const rotated = Buffer.concat([jpeg.subarray(0, 2), app1, jpeg.subarray(2)]);
+  const zip = new JSZip();
+  zip.file("exif/metadata.jsonl", JSON.stringify({ file_name: "images/tagged.jpg", fifty_ml_tubes: "2" }));
+  zip.file("exif/dataset.json", readFileSync(path.join(process.cwd(), "public/demo/train/dataset.json")));
+  zip.file("exif/images/tagged.jpg", rotated);
+  const out = path.join(mkdtempSync(path.join(tmpdir(), "hs-")), "exif.zip");
+  writeFileSync(out, await zip.generateAsync({ type: "nodebuffer" }));
+  await train(page).getByRole("button", { name: "New", exact: true }).click();
+  await page.getByRole("dialog").locator('input[type=file][accept*="zip"]').setInputFiles(out);
+  await page.getByRole("dialog").getByRole("button", { name: /^Import/ }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Done" }).click();
+  await train(page).locator("[data-grid-scroll] button:has(img)").first().click();
+  await page.getByRole("dialog").getByRole("button", { name: "Crop & add…" }).click();
+  const stage = page.locator("[data-image-editor] [data-box-stage]");
+  await expect(stage).toHaveAttribute("style", /aspect-ratio: 1024 \/ 640/);
+});
+
+test("adding a rotate does not create a region", async ({ page }) => {
+  await open(page);
+  await page.locator("[data-views-section]").getByRole("button", { name: "Add views" }).click();
+  await page.getByRole("button", { name: "Add operation" }).click();
+  await page.getByRole("button", { name: /^Rotate/ }).click();
+  await expect(page.locator("[data-views-editor] [data-op='rotate']")).toHaveCount(1);
+  await expect(page.locator("[data-views-editor]")).toContainText("No regions yet");
 });
 
 test("the export can include advanced metrics and always records what it was compared against", async ({ page }) => {
@@ -811,4 +1010,66 @@ test("folder roles come from each dataset's own folder, one dataset per role", a
   await role(plan, "exp/training_set/", "Skip");
   await role(plan, "exp/test/", "Test");
   await expect(page.getByRole("dialog")).toContainText("Several folders look like the training set");
+});
+
+test("drawing in the image editor redraws the crop and keeps its outline on the same area", async ({ page }) => {
+  await open(page);
+  await train(page).locator("[data-grid-scroll] button:has(img)").first().click();
+  await page.getByRole("dialog").getByRole("button", { name: "Crop & add…" }).click();
+  const editor = page.locator("[data-image-editor]");
+  await editor.getByRole("button", { name: "Add edit" }).click();
+  await page.getByRole("button", { name: /^Outline/ }).click();
+  await expect(editor.locator("[data-op]")).toHaveCount(2);
+  // a box drawn far from the starting centre crop: the result is the drawn area, not an empty overlap
+  await drawOnStage(page, [0.02, 0.05], [0.22, 0.45]);
+  await expect(editor.locator("[data-op='crop']")).toHaveCount(1);
+  await expect(editor.locator("[data-op]")).toHaveCount(2);
+  // the 1024×640 source cropped to ~20% × 40% (+12% margin) is about 230×290 px, not a sliver
+  const size = (await editor.locator("[data-view-preview]").innerText()).match(/(\d+)×(\d+) px/)!;
+  expect(Number(size[1])).toBeGreaterThan(200);
+  expect(Number(size[2])).toBeGreaterThan(250);
+  await expect(editor.locator("[data-box-stage] [data-box]")).toHaveCount(1); // crop and outline share the one area
+});
+
+test("drawing keeps the selected step; a plain click on the image clears it", async ({ page }) => {
+  await open(page);
+  await train(page).locator("[data-grid-scroll] button:has(img)").first().click();
+  await page.getByRole("dialog").getByRole("button", { name: "Crop & add…" }).click();
+  const editor = page.locator("[data-image-editor]");
+  await editor.getByRole("button", { name: "Add edit" }).click();
+  await page.getByRole("button", { name: /^Spotlight/ }).click();
+  const spotlight = editor.locator("[data-op='spotlight']");
+  await spotlight.click({ position: { x: 60, y: 10 } });
+  await expect(spotlight).toHaveClass(/border-accent/);
+  await drawOnStage(page, [0.05, 0.05], [0.3, 0.4]);
+  await expect(spotlight).toHaveClass(/border-accent/); // still the step being edited
+  const bb = (await editor.locator("[data-box-stage]").boundingBox())!;
+  await page.mouse.click(bb.x + bb.width * 0.9, bb.y + bb.height * 0.9);
+  await expect(editor.locator("[data-op].border-accent")).toHaveCount(0);
+});
+
+test("an exported experiment brings its prompt's image views back on import", async ({ page, browser }) => {
+  await open(page);
+  await page.locator("[data-views-section]").getByRole("button", { name: "Add views" }).click();
+  await drawOnStage(page, [0.3, 0.35], [0.55, 0.75]);
+  await page.getByRole("button", { name: /Whole image \+ framed close-up/ }).click();
+  await page.getByRole("button", { name: "Save views" }).click();
+  const promptStep = page.locator("nav[aria-label=Experiment] > div").nth(1);
+  const hash = (await promptStep.innerText()).match(/[0-9a-f]{8}/)![0];
+  await page.getByRole("button", { name: "Export experiment" }).click();
+  const dl = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download zip" }).click();
+  const zipBytes = readFileSync(await (await dl).path());
+
+  const fresh = await (await browser.newContext({ viewport: { width: 1600, height: 1000 } })).newPage();
+  await fresh.route("**/demo/seed.json", (r) => r.fulfill({ status: 404, body: "" }));
+  await fresh.goto("/");
+  await fresh.locator('[data-panel="train"]').getByRole("button", { name: "Import experiment" }).click();
+  await fresh.getByRole("dialog").getByLabel("Experiment zip").setInputFiles({ name: "e.zip", mimeType: "application/zip", buffer: zipBytes });
+  await fresh.getByRole("dialog").getByRole("button", { name: "Import", exact: true }).click();
+  await fresh.getByRole("dialog").getByRole("button", { name: "Done" }).click({ timeout: 60_000 });
+  const section = fresh.locator("[data-views-section]");
+  await expect(section).toContainText("View 2: Outline Region 1, crop to Region 1 +50%");
+  await expect(fresh.locator("nav[aria-label=Experiment] > div").nth(1)).toContainText(hash);
+  await fresh.context().close();
 });

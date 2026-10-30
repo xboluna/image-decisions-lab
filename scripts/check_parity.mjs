@@ -132,6 +132,70 @@ for (const side of SIDES) {
   }
 }
 
+// Image views: operations before the resize (lib/ops.ts vs reference_pipeline.py apply_ops).
+const regions = [
+  { id: "mid", box: [0.3, 0.35, 0.55, 0.75] },
+  { id: "edge", box: [0.82, 0.0, 1.0, 0.27] },
+  { id: "tiny", box: [0.5013, 0.4977, 0.5371, 0.5489] },
+];
+const VIEWS = {
+  "crop +12%": { ops: [{ kind: "crop", area: { region: "mid" }, margin: 0.12 }] },
+  "outline (auto width)": { ops: [{ kind: "outline", area: { region: "mid" }, color: "#ff00ff", width: 0 }] },
+  "outline at the edge, 7 px": { ops: [{ kind: "outline", area: { region: "edge" }, color: "#ffd400", width: 7 }] },
+  spotlight: { ops: [{ kind: "spotlight", area: { region: "mid" }, dim: 0.35 }] },
+  "outline + crop +50%": {
+    ops: [
+      { kind: "outline", area: { region: "mid" }, color: "#ff00ff", width: 0 },
+      { kind: "crop", area: { region: "mid" }, margin: 0.5 },
+    ],
+  },
+  "crop + outline inside it": {
+    ops: [
+      { kind: "crop", area: { region: "mid" }, margin: 0.3 },
+      { kind: "outline", area: { region: "mid" }, color: "#00e5ff", width: 3 },
+    ],
+  },
+  "rotate 90° + crop": {
+    ops: [
+      { kind: "rotate", degrees: 90 },
+      { kind: "crop", area: { region: "mid" }, margin: 0.1 },
+    ],
+  },
+  "rotate 270° + spotlight + outline": {
+    ops: [
+      { kind: "rotate", degrees: 270 },
+      { kind: "spotlight", area: { region: "edge" }, dim: 0.5 },
+      { kind: "outline", area: { region: "edge" }, color: "#ff2d2d", width: 0 },
+    ],
+  },
+  "rotate 180° + inline crop": { ops: [{ kind: "rotate", degrees: 180 }, { kind: "crop", area: { box: [0.1, 0.1, 0.45, 0.6] }, margin: 0 }] },
+  "tiny crop, enlarged": { ops: [{ kind: "crop", area: { region: "tiny" }, margin: 0.05 }], enlarge: true },
+  "crop, enlarged (portrait)": { ops: [{ kind: "crop", area: { box: [0.4, 0.1, 0.5, 0.9] }, margin: 0 }], enlarge: true },
+};
+const viewInputs = [inputs[0], ...inputs.filter((i) => /large|odd-1001|progressive|rgba/i.test(i.kind)).slice(0, 4)];
+const VIEW_SIDE = 1024;
+for (const [name, spec] of Object.entries(VIEWS)) {
+  const view = { regions, enlarge: false, ...spec };
+  const viewFile = path.join(work, `view-${rows.length}.json`);
+  writeFileSync(viewFile, JSON.stringify(view));
+  const refDir = path.join(work, `ref-view-${rows.length}`);
+  uv([path.join(root, "scripts/reference_pipeline.py"), "--max-side", String(VIEW_SIDE), "--quality", String(QUALITY), "--out", refDir, "--view", viewFile, ...viewInputs.map((i) => i.file)]);
+  for (const input of viewInputs) {
+    const file = `${path.basename(input.file).replace(/\.[^.]+$/, "")}.jpg`;
+    const ref = readFileSync(path.join(refDir, file));
+    const row = { kind: `view: ${name}`, side: VIEW_SIDE, identical: false, maxDiff: null, exact: true, note: "" };
+    rows.push(row);
+    const out = await encodeForModel(new Uint8Array(readFileSync(input.file)), VIEW_SIDE, QUALITY, view);
+    row.exact = out.exact;
+    row.identical = sha(out.jpeg) === sha(ref);
+    if (!row.identical) {
+      const mine = path.join(refDir, `browser-${file}`);
+      writeFileSync(mine, out.jpeg);
+      row.maxDiff = uv(["--with", PILLOW, "python", "-c", COMPARE], `${path.join(refDir, file)}\t${mine}`).trim();
+    }
+  }
+}
+
 // One row per input class: demo images grouped, each edge case on its own.
 const groups = new Map();
 for (const r of rows) {

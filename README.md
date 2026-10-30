@@ -13,6 +13,15 @@ local storage. Model calls go straight from the browser to `openrouter.ai`. Ther
    content hash over its images, labels and label schema.
 2. **Prompt.** Write the system prompt, pick the label to classify, phrase the question and its criteria, and add
    reference images (positive/negative for yes/no labels, a class for class labels).
+   **Image views** (bottom of the prompt) decide what the model sees of each image: draw regions on a sample
+   training image, then build one or more views from operations applied in order: **crop** (with a margin of
+   context), **outline** (a frame drawn just outside an area), **spotlight** (darken everything else) and
+   **rotate**. Regions are fractions of the image, so the same crop lands on the same object in every image
+   from a fixed camera. Each view is sent as its own image with an optional caption; presets cover "crop to the
+   region", "outline it" and "whole image + framed close-up". Reference examples can be edited the same way
+   (the crop icon on each example), and **Crop & add** in the image viewer cuts a new example from any training
+   image. Edits are stored as operations on the original image, included in the prompt hash, and exported and
+   imported with the prompt.
 3. **Settings.** Paste an OpenRouter key (checked against `/api/v1/key`, which shows the spending limit) and pick
    a decision model. The key is saved client-side, and never goes anywhere.
 4. **Score the training set.** Accuracy, balanced accuracy, the score histogram, precision-recall curves and the
@@ -60,6 +69,13 @@ WebP, GIF, CMYK JPEG and compressed or paletted BMP fall back to the browser's d
 the same way, but their decoded pixels may differ from Pillow's, and an experiment export marks them
 `pixel_exact: false`. The export's `prompt/sent/` holds the exact JPEG sent for each reference example, and
 `prompt.json` lists their sha256.
+
+Image views run between the decode and the resize: crop, outline, spotlight and rotate operate on the
+full-resolution pixels with integer arithmetic (`lib/ops.ts`), and `reference_pipeline.py` has the same operations
+in plain Pillow (`apply_ops`, `view_jpeg`; pass a view as JSON with `--view`). A view with **Enlarge** that ends up
+smaller than the image size is resized up with `Image.resize(size, BICUBIC)` to a fixed size (`enlarged_size`)
+instead of `thumbnail`. The parity check covers views too (crops with margins, outlines at the edge, spotlight,
+rotations before crops, enlarged tiny crops), all byte-identical.
 
 ## Dataset format
 

@@ -1,11 +1,13 @@
 "use client";
-import { AlertTriangle, ChevronLeft, ChevronRight, Code2, Plus } from "lucide-react";
+import { AlertTriangle, ChevronLeft, ChevronRight, Code2, Crop, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useExperiment, type Analysis } from "@/lib/analysis";
 import type { Target } from "@/lib/metrics";
 import { useStore } from "@/lib/store";
 import type { ClassMapping, Dataset, DatasetItem } from "@/lib/types";
 import { classColor, classLabel, OUTCOME_META } from "./colors";
+import type { ImageOp } from "@/lib/ops";
+import { ImageEditor } from "./ImageViews";
 import { StoredImage } from "./StoredImage";
 import { Badge, Button, cx, fmtUsd, HashChip, IconButton, Modal } from "./ui";
 
@@ -29,7 +31,10 @@ export function ItemDetail({ item, dataset, analysis, target, targetKey, mapping
   const [showRaw, setShowRaw] = useState(false);
   const { threshold } = useExperiment();
 
+  const [cropping, setCropping] = useState(false);
   useEffect(() => {
+    // While the crop editor is open on top, arrow keys belong to it (they nudge boxes).
+    if (cropping) return;
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.tagName === "INPUT" || (e.target as HTMLElement)?.tagName === "TEXTAREA") return;
       if (e.key === "ArrowLeft" && onPrev) onPrev();
@@ -37,7 +42,7 @@ export function ItemDetail({ item, dataset, analysis, target, targetKey, mapping
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onPrev, onNext]);
+  }, [onPrev, onNext, cropping]);
 
   const gtRaw = targetKey ? item.labels[targetKey] : null;
   const alreadyExample = prompt?.examples.some((e) => e.imageHash === item.imageHash);
@@ -45,9 +50,9 @@ export function ItemDetail({ item, dataset, analysis, target, targetKey, mapping
   const isTestSet = useStore((s) => s.selection.test === dataset.id);
   const peeking = useStore((s) => !!s.peek);
   const canAdd = !isTestSet && !peeking && prompt && targetKey === prompt.targetKey && gtRaw != null;
-  const add = () => {
+  const add = (ops?: ImageOp[]) => {
     if (!prompt || gtRaw == null) return;
-    addExample({ imageHash: item.imageHash, fileName: item.fileName, caption: "", label: prompt.targetType === "boolean" ? gtRaw === true || gtRaw === "true" : String(gtRaw) });
+    addExample({ imageHash: item.imageHash, fileName: item.fileName, caption: "", label: prompt.targetType === "boolean" ? gtRaw === true || gtRaw === "true" : String(gtRaw), ...(ops?.length ? { ops } : {}) });
     notify(`Added ${item.fileName.split("/").pop()} to "${prompt.name}" as a ${prompt.targetType === "boolean" ? (gtRaw ? "positive" : "negative") : `"${gtRaw}"`} example. The prompt hash changed, so runs need re-scoring.`);
   };
   const outcome = row?.outcome ? OUTCOME_META[row.outcome] : null;
@@ -191,10 +196,31 @@ export function ItemDetail({ item, dataset, analysis, target, targetKey, mapping
               <p className="mt-0.5 text-[11.5px] text-ink-2">
                 Hard cases make the best references.
               </p>
-              <Button className="mt-2" size="sm" variant="secondary" icon={<Plus className="size-3.5" />} onClick={add} disabled={alreadyExample}>
-                {alreadyExample ? "Already in the prompt" : `Add to prompt as ${prompt?.targetType === "boolean" ? (gtRaw ? "positive" : "negative") : `"${String(gtRaw)}"`}`}
-              </Button>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                <Button size="sm" variant="secondary" icon={<Plus className="size-3.5" />} onClick={() => add()} disabled={alreadyExample}>
+                  {alreadyExample ? "Already in the prompt" : `Add to prompt as ${prompt?.targetType === "boolean" ? (gtRaw ? "positive" : "negative") : `"${String(gtRaw)}"`}`}
+                </Button>
+                <Button size="sm" variant="ghost" icon={<Crop className="size-3.5" />} onClick={() => setCropping(true)}>
+                  Crop &amp; add…
+                </Button>
+              </div>
             </div>
+          )}
+          {cropping && prompt && (
+            <ImageEditor
+              hash={item.imageHash}
+              name={item.fileName}
+              initialOps={[]}
+              regions={prompt.regions ?? []}
+              maxSide={prompt.imageMaxSide}
+              title="Cut a reference example"
+              saveLabel={`Add to prompt as ${prompt.targetType === "boolean" ? (gtRaw ? "positive" : "negative") : `"${String(gtRaw)}"`}`}
+              onSave={(ops) => {
+                add(ops);
+                setCropping(false);
+              }}
+              onClose={() => setCropping(false)}
+            />
           )}
         </div>
       </div>
