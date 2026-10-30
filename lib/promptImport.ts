@@ -1,8 +1,8 @@
 "use client";
-import JSZip from "jszip";
 import { db } from "./db";
 import { sha256Bytes, uid } from "./hash";
 import { imageSize, mimeFor, resizeJpeg } from "./image";
+import { expandZips, type FileEntry } from "./importer";
 import type { Prompt, PromptExample } from "./types";
 
 type PromptFile = {
@@ -18,25 +18,34 @@ type PromptFile = {
 
 /** Reads a prompt zip made by "Download prompt": prompt.json plus its reference images. Returns a new prompt. */
 export async function importPromptZip(file: Blob, existingNames: string[]): Promise<{ prompt: Prompt; warnings: string[] }> {
-  const zip = await JSZip.loadAsync(await file.arrayBuffer());
-  const jsonPath = Object.keys(zip.files).find((n) => n === "prompt.json" || n.endsWith("/prompt.json"));
-  if (!jsonPath) throw new Error("This zip has no prompt.json. Use a file made by “Download prompt”.");
-  const root = jsonPath.slice(0, jsonPath.length - "prompt.json".length);
+  const files = await expandZips([{ path: "prompt.zip", file }]);
+  if (!files.some((f) => f.path === "prompt.json" || f.path.endsWith("/prompt.json"))) {
+    throw new Error("This zip has no prompt.json. Use a file made by “Download prompt”.");
+  }
+  return importPromptFiles(files, existingNames);
+}
+
+/** Reads prompt.json and its reference images from a set of files (a prompt zip, a folder, or part of a bundle). */
+export async function importPromptFiles(files: FileEntry[], existingNames: string[], jsonPath?: string): Promise<{ prompt: Prompt; warnings: string[] }> {
+  const json = jsonPath ? files.find((f) => f.path === jsonPath) : files.filter((f) => f.path === "prompt.json" || f.path.endsWith("/prompt.json")).sort((x, y) => x.path.length - y.path.length)[0];
+  if (!json) throw new Error("No prompt.json found.");
+  const root = json.path.slice(0, json.path.length - "prompt.json".length);
+  const byPath = new Map(files.map((f) => [f.path, f.file]));
   let data: PromptFile;
   try {
-    data = JSON.parse(await zip.files[jsonPath].async("string")) as PromptFile;
+    data = JSON.parse(await json.file.text()) as PromptFile;
   } catch {
-    throw new Error("prompt.json is not valid JSON.");
+    throw new Error(`${json.path} is not valid JSON.`);
   }
   const warnings: string[] = [];
   const examples: PromptExample[] = [];
   for (const [i, e] of (data.examples ?? []).entries()) {
-    const entry = zip.files[root + e.file];
+    const entry = byPath.get(root + e.file);
     if (!entry) {
-      warnings.push(`Example ${i + 1} (${e.file}) is missing from the zip and was skipped.`);
+      warnings.push(`Example ${i + 1} (${e.file}) is missing and was skipped.`);
       continue;
     }
-    const bytes = await entry.async("uint8array");
+    const bytes = new Uint8Array(await entry.arrayBuffer());
     const imageHash = await sha256Bytes(bytes);
     if (e.sha256 && e.sha256 !== imageHash) warnings.push(`Example ${i + 1} does not match its recorded hash; the image in the zip was used.`);
     const blob = new Blob([bytes as BlobPart], { type: mimeFor(e.file) });

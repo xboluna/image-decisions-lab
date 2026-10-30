@@ -553,3 +553,74 @@ test("a file dropped while viewing an earlier version, or outside any drop zone,
   await expect(page.locator("[data-peek-banner]")).toBeVisible();
   await expect(page.locator('[data-panel="prompt"] ol > li')).toHaveCount(0);
 });
+
+test("an exported experiment imports into a fresh browser with its results, no scoring needed", async ({ page, browser }) => {
+  await open(page);
+  await page.getByRole("button", { name: "Export experiment" }).click();
+  const dl = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download zip" }).click();
+  const zipBytes = readFileSync(await (await dl).path());
+
+  // A fresh browser profile with no demo.
+  const fresh = await (await browser.newContext({ viewport: { width: 1600, height: 1000 } })).newPage();
+  await fresh.route("**/demo/seed.json", (r) => r.fulfill({ status: 404, body: "" }));
+  await fresh.goto("/");
+  await fresh.locator('[data-panel="train"]').getByRole("button", { name: "Import experiment" }).click();
+  const dialog = fresh.getByRole("dialog");
+  await dialog.getByLabel("Experiment zip").setInputFiles({ name: "experiment.zip", mimeType: "application/zip", buffer: zipBytes });
+  const plan = dialog.locator("[data-bundle-plan]");
+  await expect(plan).toContainText("50 ml tubes · train");
+  await expect(plan).toContainText("27 of 27 images");
+  await expect(plan).toContainText("50 ml tubes v2");
+  await expect(plan).toContainText("48 answers");
+  await dialog.getByRole("button", { name: "Import", exact: true }).click();
+  await expect(dialog.locator("[data-bundle-result]")).toContainText("Restored 48 saved answers in 2 runs", { timeout: 60_000 });
+  await dialog.getByRole("button", { name: "Done" }).click();
+  await expect(fresh.locator('[data-panel="train"]').getByText("All 27 answers already cached")).toBeVisible();
+  await expect(fresh.locator('[data-panel="test"]').getByText("All 21 answers already cached")).toBeVisible();
+  await expect(fresh.locator('[data-panel="train"]').getByText("Balanced accuracy").first()).toBeVisible();
+  await expect(fresh.getByRole("button", { name: "Choose prompt" })).toContainText("50 ml tubes v2");
+  await fresh.context().close();
+});
+
+test("a plain folder with prompt.json and train/test datasets imports with roles from folder names", async ({ page }) => {
+  await open(page);
+  await page.getByRole("button", { name: "Choose prompt" }).click();
+  const dl = page.waitForEvent("download");
+  await page.getByRole("button", { name: /^Download “50 ml tubes v2”/ }).click();
+  const promptZip = await JSZip.loadAsync(readFileSync(await (await dl).path()));
+  await page.keyboard.press("Escape");
+  const zip = new JSZip();
+  for (const [name, f] of Object.entries(promptZip.files)) if (!f.dir) zip.file(`my-exp/${name}`, await f.async("uint8array"));
+  for (const role of ["train", "test"]) {
+    const dir = path.join(process.cwd(), `public/demo/${role}`);
+    const lines = readFileSync(path.join(dir, "metadata.jsonl"), "utf8").trim().split("\n").slice(0, 6);
+    zip.file(`my-exp/${role === "train" ? "training_set" : "holdout"}/metadata.jsonl`, lines.join("\n"));
+    const card = JSON.parse(readFileSync(path.join(dir, "dataset.json"), "utf8"));
+    zip.file(`my-exp/${role === "train" ? "training_set" : "holdout"}/dataset.json`, JSON.stringify({ schema: card.schema }));
+    for (const l of lines.map((x) => JSON.parse(x))) zip.file(`my-exp/${role === "train" ? "training_set" : "holdout"}/${l.file_name}`, readFileSync(path.join(dir, l.file_name)));
+  }
+  const out = path.join(mkdtempSync(path.join(tmpdir(), "hs-")), "folder.zip");
+  writeFileSync(out, await zip.generateAsync({ type: "nodebuffer" }));
+
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  await page.getByRole("button", { name: "Import experiment…" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Experiment zip").setInputFiles(out);
+  const plan = dialog.locator("[data-bundle-plan] li");
+  await expect(plan.filter({ hasText: "training_set" }).getByRole("radio", { name: "Training" })).toHaveAttribute("aria-checked", "true");
+  await expect(plan.filter({ hasText: "holdout" }).getByRole("radio", { name: "Test" })).toHaveAttribute("aria-checked", "true");
+  // swapping one role frees the other
+  await plan.filter({ hasText: "holdout" }).getByRole("radio", { name: "Training" }).click();
+  await expect(plan.filter({ hasText: "training_set" }).getByRole("radio", { name: "Skip" })).toHaveAttribute("aria-checked", "true");
+  await plan.filter({ hasText: "training_set" }).getByRole("radio", { name: "Training" }).click();
+  await plan.filter({ hasText: "holdout" }).getByRole("radio", { name: "Test" }).click();
+  await dialog.getByRole("button", { name: "Import", exact: true }).click();
+  await expect(dialog.locator("[data-bundle-result]")).toContainText("Training set: training_set · 6 images", { timeout: 60_000 });
+  await dialog.getByRole("button", { name: "Done" }).click();
+  await expect(train(page).getByRole("button", { name: /Choose training dataset/ })).toContainText("training_set");
+  await expect(testPanel(page).getByRole("button", { name: /Choose test dataset/ })).toContainText("holdout");
+  await expect(page.getByRole("button", { name: "Choose prompt" })).toContainText("50 ml tubes v2 (imported)");
+  // same prompt and images as the demo: their answers are already cached
+  await expect(train(page).getByText("All 6 answers already cached")).toBeVisible();
+});

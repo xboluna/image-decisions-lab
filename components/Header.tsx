@@ -1,5 +1,5 @@
 "use client";
-import { ArrowRight, Download, Eraser, Monitor, Moon, MoreHorizontal, RefreshCw, Sun, Trash2 } from "lucide-react";
+import { ArrowRight, Download, Eraser, Monitor, Moon, MoreHorizontal, PackageOpen, RefreshCw, Sun, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useExperiment } from "@/lib/analysis";
 import { exportExperiment } from "@/lib/export";
@@ -84,8 +84,9 @@ export function Header() {
   const [theme, setTheme] = useTheme();
   const [menu, setMenu] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
-  const [includeImages, setIncludeImages] = useState(false);
+  const [includeImages, setIncludeImages] = useState(true);
   const [busy, setBusy] = useState(false);
+  const setBundleImportOpen = useStore((s) => s.setBundleImportOpen);
   const [confirm, setConfirm] = useState<null | "reset" | "demo" | "clearDemo">(null);
   const live = useStore((s) => s.live);
   const roleState = (role: "train" | "test"): StepState => {
@@ -158,6 +159,15 @@ export function Header() {
                 </div>
               </div>
               <div className="my-1 border-t border-line" />
+              <MenuItem
+                icon={<PackageOpen className="size-4" />}
+                onClick={() => {
+                  setMenu(false);
+                  setBundleImportOpen(true);
+                }}
+              >
+                Import experiment…
+              </MenuItem>
               <MenuItem
                 icon={<RefreshCw className="size-4" />}
                 onClick={() => {
@@ -239,7 +249,7 @@ export function Header() {
         </ul>
         <label className="mt-3 flex items-center gap-2 text-[12.5px]">
           <input type="checkbox" checked={includeImages} onChange={(e) => setIncludeImages(e.target.checked)} className="accent-[var(--accent)]" />
-          Include dataset images (larger download)
+          Include dataset images (needed to import the experiment again)
         </label>
         {(exp.train?.stale || exp.test?.stale) && <p className="mt-2 rounded-lg bg-warning-wash px-2.5 py-1.5 text-[12px] text-warning-ink">Some results shown are from an earlier prompt version; the export marks them as stale.</p>}
       </Modal>

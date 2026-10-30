@@ -25,6 +25,11 @@ local storage. Model calls go straight from the browser to `openrouter.ai`. Ther
    examples (test-set images are never offered). Merge or exclude classes to see whether a coarser label scores better.
 8. **Export experiment.** Export one zip with the prompt (and exact request body), dataset manifests and hashes,
    per-image answers (JSONL and CSV), metrics, PR curves, confusion matrix, histogram, and the charts as SVG.
+9. **Import experiment.** ⋯ → Import experiment (or the button on an empty training panel) takes a folder or zip:
+   an exported experiment, or any folder with a `prompt.json` and ImageFolder dataset folders (folders named
+   train / test / holdout / val get that role). Review what was found, adjust roles, and import it all at once.
+   An exported experiment also restores the model's saved answers onto the same dataset version, so its
+   results show without scoring again.
 
 ## Dataset format
 
