@@ -1,5 +1,5 @@
 "use client";
-import { ArrowRight, Download, Eraser, Monitor, Moon, MoreHorizontal, PackageOpen, RefreshCw, Sun, Trash2 } from "lucide-react";
+import { ArrowRight, Download, Eraser, Monitor, Moon, MoreHorizontal, PackageOpen, RefreshCw, Sigma, Sun, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useExperiment } from "@/lib/analysis";
 import { exportExperiment } from "@/lib/export";
@@ -87,6 +87,8 @@ export function Header() {
   const [includeImages, setIncludeImages] = useState(true);
   const [busy, setBusy] = useState(false);
   const setBundleImportOpen = useStore((s) => s.setBundleImportOpen);
+  const advancedMetrics = useStore((s) => s.settings.advancedMetrics);
+  const setSettings = useStore((s) => s.setSettings);
   const [confirm, setConfirm] = useState<null | "reset" | "demo" | "clearDemo">(null);
   const live = useStore((s) => s.live);
   const roleState = (role: "train" | "test"): StepState => {
@@ -158,6 +160,22 @@ export function Header() {
                   ))}
                 </div>
               </div>
+              <div className="my-1 border-t border-line" />
+              <button
+                type="button"
+                role="menuitemcheckbox"
+                aria-checked={advancedMetrics}
+                onClick={() => setSettings({ advancedMetrics: !advancedMetrics })}
+                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] text-ink transition-colors hover:bg-surface-3"
+              >
+                <span className="text-muted">
+                  <Sigma className="size-4" />
+                </span>
+                <span className="flex-1">Advanced metrics</span>
+                <span className={cx("inline-flex h-4 w-7 items-center rounded-full p-0.5 transition-colors", advancedMetrics ? "bg-accent" : "bg-line-strong")}>
+                  <span className={cx("size-3 rounded-full bg-white shadow-card transition-transform", advancedMetrics && "translate-x-3")} />
+                </span>
+              </button>
               <div className="my-1 border-t border-line" />
               <MenuItem
                 icon={<PackageOpen className="size-4" />}

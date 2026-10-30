@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import JSZip from "jszip";
+import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -229,6 +230,14 @@ test("exports: dataset and experiment bundles", async ({ page }) => {
   expect(preds[0].raw_answer).toBeTruthy();
   const prompt = JSON.parse(await zip.file(find("prompt/prompt.json"))!.async("string"));
   expect(prompt.examples).toHaveLength(3);
+  expect(prompt.image.pipeline).toBe("pillow-thumbnail-bicubic/libjpeg-turbo-q85-420");
+  // the exact JPEG sent for each example, with its hash, so another pipeline can verify it sends the same bytes
+  expect(prompt.sent_examples).toHaveLength(3);
+  for (const s of prompt.sent_examples) {
+    const bytes = await zip.file(find(`prompt/${s.file}`))!.async("nodebuffer");
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe(s.sha256);
+    expect(s.pixel_exact).toBe(true);
+  }
   expect(all.some((n) => n.endsWith("results/train/charts/confusion_matrix.svg"))).toBe(true);
   const svg = await zip.file(find("results/train/charts/score_histogram.svg"))!.async("string");
   expect(svg).not.toContain("var(--");
@@ -475,7 +484,7 @@ test("the comparison bar names the baseline, and peeking shows that version unti
   await expect(page.getByLabel("Question")).toBeDisabled();
   await expect(train(page).getByRole("button", { name: "Score training set" })).toBeDisabled();
   await expect(train(page).locator("text=Balanced accuracy").first().locator("..").locator("..")).toContainText("▼");
-  await expect(page.locator("nav[aria-label=Experiment] > div").nth(1)).toContainText("51755a05");
+  await expect(page.locator("nav[aria-label=Experiment] > div").nth(1)).toContainText("c2f39c93");
 
   await page.locator("[data-peek-banner]").getByRole("button", { name: "Switch back" }).click();
   await expect(bar).toContainText("Comparing against");
@@ -664,4 +673,30 @@ test("bundle import finds images by file name, and a failed import leaves nothin
   await openImport(await build(null));
   await page.getByRole("dialog").getByRole("button", { name: "Import", exact: true }).click();
   await expect(page.getByRole("dialog").locator("[data-bundle-result]")).toContainText("Bare names · 4 images", { timeout: 30_000 });
+});
+
+test("advanced metrics are off by default and toggled from the ⋯ menu", async ({ page }) => {
+  await open(page);
+  await expect(page.locator("[data-advanced-metrics]")).toHaveCount(0);
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  const toggle = page.getByRole("menuitemcheckbox", { name: "Advanced metrics" });
+  await expect(toggle).toHaveAttribute("aria-checked", "false");
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-checked", "true");
+  await page.keyboard.press("Escape");
+  const trainAdv = train(page).locator("[data-advanced-metrics]");
+  await expect(trainAdv).toContainText("AUROC");
+  await expect(trainAdv).toContainText("Macro balanced accuracy");
+  await expect(trainAdv).toContainText(/AUROC\s*\d+\.\d%/);
+  // the all-classes view fits no threshold, so cross-validation does not apply there
+  await expect(trainAdv).toContainText("binary views only");
+  await expect(testPanel(page).locator("[data-advanced-metrics]")).toContainText("training set only");
+  // a one-vs-rest view fits a threshold on the training set, so it is cross-validated
+  await train(page).getByRole("combobox", { name: "Results view" }).selectOption("2");
+  await expect(trainAdv).toContainText(/Cross-validated BA\s*\d+\.\d%/);
+  await trainAdv.getByRole("button", { name: "About cross-validated ba" }).hover();
+  await expect(page.getByRole("tooltip")).toContainText("fitted on one half");
+  // the choice is remembered
+  await page.reload();
+  await expect(train(page).locator("[data-advanced-metrics]")).toBeVisible({ timeout: 30_000 });
 });

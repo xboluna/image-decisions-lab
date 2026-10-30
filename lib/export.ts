@@ -2,10 +2,11 @@
 import JSZip from "jszip";
 import type { Analysis, ThresholdInfo } from "./analysis";
 import { db } from "./db";
-import { shortHash } from "./hash";
+import { sha256Bytes, shortHash } from "./hash";
 import { manifestJsonl } from "./manifest";
 import { ALL } from "./metrics";
-import { buildQuestion, buildState, questionId, STATE_TEMPLATE_VERSION, JPEG_QUALITY } from "./prompt";
+import { buildQuestion, buildState, IMAGE_PIPELINE, JPEG_QUALITY, questionId, STATE_TEMPLATE_VERSION } from "./prompt";
+import { modelJpeg } from "./runner";
 import type { ClassMapping, Dataset, Prompt } from "./types";
 
 export const TOOL = { name: "Image Decisions Lab", version: "0.1.0" };
@@ -72,12 +73,23 @@ function examplePath(i: number, fileName: string) {
   return `examples/${String(i + 1).padStart(2, "0")}-${fileName.split("/").pop()}`;
 }
 
+/** The exact JPEG sent for an example, so another pipeline can check it sends the same bytes. */
+function sentPath(i: number, fileName: string) {
+  return `sent/${String(i + 1).padStart(2, "0")}-${(fileName.split("/").pop() ?? "image").replace(/\.[^.]+$/, "")}.jpg`;
+}
+
 export function promptRecord(prompt: Prompt, hash: string) {
   return {
     name: prompt.name,
     hash: `sha256:${hash}`,
     state_template_version: STATE_TEMPLATE_VERSION,
-    image: { max_side: prompt.imageMaxSide, format: "jpeg", quality: JPEG_QUALITY },
+    image: {
+      max_side: prompt.imageMaxSide,
+      format: "jpeg",
+      quality: JPEG_QUALITY,
+      pipeline: IMAGE_PIPELINE,
+      pillow_equivalent: `img = Image.open(f).convert("RGB"); img.thumbnail((${prompt.imageMaxSide}, ${prompt.imageMaxSide})); img.save(out, "JPEG", quality=${JPEG_QUALITY})`,
+    },
     system_prompt: prompt.systemPrompt,
     target: { key: prompt.targetKey, type: prompt.targetType },
     question_id: questionId(prompt),
@@ -94,11 +106,16 @@ export function promptRecord(prompt: Prompt, hash: string) {
 }
 
 async function addPrompt(zip: JSZip, prompt: Prompt, hash: string) {
-  zip.file("prompt.json", JSON.stringify({ ...promptRecord(prompt, hash), restore: prompt }, null, 2));
+  const sent: { file: string; source_file: string; sha256: string; width: number; height: number; pixel_exact: boolean }[] = [];
   for (const [i, e] of prompt.examples.entries()) {
     const blob = await db.getImage(e.imageHash);
-    if (blob) zip.file(examplePath(i, e.fileName), blob);
+    if (!blob) continue;
+    zip.file(examplePath(i, e.fileName), blob);
+    const out = await modelJpeg(e.imageHash, prompt.imageMaxSide);
+    zip.file(sentPath(i, e.fileName), out.jpeg);
+    sent.push({ file: sentPath(i, e.fileName), source_file: examplePath(i, e.fileName), sha256: await sha256Bytes(out.jpeg), width: out.width, height: out.height, pixel_exact: out.exact });
   }
+  zip.file("prompt.json", JSON.stringify({ ...promptRecord(prompt, hash), sent_examples: sent, restore: prompt }, null, 2));
 }
 
 export async function exportPrompt(prompt: Prompt, hash: string) {

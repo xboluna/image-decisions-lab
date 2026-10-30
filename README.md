@@ -16,7 +16,9 @@ local storage. Model calls go straight from the browser to `openrouter.ai`. Ther
 3. **Settings.** Paste an OpenRouter key (checked against `/api/v1/key`, which shows the spending limit) and pick
    a decision model. The key is saved client-side, and never goes anywhere.
 4. **Score the training set.** Accuracy, balanced accuracy, the score histogram, precision-recall curves and the
-   confusion matrix. Optionally choose (or fit) a threshold to maximize balanced accuracy.
+   confusion matrix. Optionally choose (or fit) a threshold to maximize balanced accuracy. Turn on
+   **Advanced metrics** in the ⋯ menu for AUROC, cross-validated balanced accuracy (threshold fitted on one half
+   of the images, scored on the other) and macro balanced accuracy (one-vs-rest per class with at least 3 images).
 5. **Score the test set.**
 6. **Compare versions.** Save prompt versions. Easily switch between them to compare results.
 7. **Inspect.** Filter images by any label, predicted class, outcome (TP/FP/FN/TN or right/wrong), score range
@@ -30,6 +32,32 @@ local storage. Model calls go straight from the browser to `openrouter.ai`. Ther
    train / test / holdout / val get that role). Review what was found, adjust roles, and import it all at once.
    An exported experiment also restores the model's saved answers onto the same dataset version, so its
    results show without scoring again.
+
+## Pixel parity
+
+A decision model's answer on a borderline image can flip after a one-level pixel change, so the browser sends
+exactly the JPEG a Python/Pillow harness would send, byte for byte. The canonical pipeline:
+
+```python
+img = Image.open(path).convert("RGB")     # no EXIF rotation, no colour management, alpha dropped
+img.thumbnail((max_side, max_side))       # BICUBIC, reducing_gap=2.0; never upscales
+img.save(buf, "JPEG", quality=85)         # baseline, 4:2:0, standard tables, no optimize
+```
+
+`scripts/reference_pipeline.py` is that pipeline (`uv run scripts/reference_pipeline.py --max-side 1024 --out sent/
+images/*.jpg`); its docstring explains each choice. In the browser, `lib/modelImage.ts` decodes JPEG with libjpeg
+compiled to WebAssembly (`@jsquash/jpeg`, loaded on first use), PNG with `fast-png` and uncompressed BMP directly,
+then ports Pillow's resize (`lib/pillow.ts`) and libjpeg-turbo's encoder (`lib/jpegEncoder.ts`). Thumbnails in the
+UI still use the canvas; they are never sent.
+
+`node scripts/check_parity.mjs` (Node 22.18+, uv) runs both pipelines on every demo image and on generated edge
+cases (6000×4000 and 4200×3150 photos, odd sizes, progressive, 4:2:2 and 4:4:4 JPEG, greyscale, RGBA, palette,
+1-, 2- and 16-bit PNG, interlaced PNG, BMP, thin strips, a JPEG comment, an EXIF-rotated JPEG) at 512, 1024 and
+1280 px, and fails on any byte difference. `e2e/parity.spec.ts` checks the request bodies in Chromium and WebKit.
+WebP, GIF, CMYK JPEG and compressed or paletted BMP fall back to the browser's decoder: they are resized and encoded
+the same way, but their decoded pixels may differ from Pillow's, and an experiment export marks them
+`pixel_exact: false`. The export's `prompt/sent/` holds the exact JPEG sent for each reference example, and
+`prompt.json` lists their sha256.
 
 ## Dataset format
 
