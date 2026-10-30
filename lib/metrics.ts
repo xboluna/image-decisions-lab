@@ -308,3 +308,136 @@ export function fitThreshold(rows: Row[]): number | null {
 function round4(x: number): number {
   return Math.round(x * 10000) / 10000;
 }
+
+/**
+ * Robust metrics, shown when "Advanced metrics" is on.
+ *
+ * AUROC: the chance a random positive scores above a random negative (Mann-Whitney; ties count half). It ignores
+ * the threshold entirely. In the all-classes view it is averaged one-vs-rest over classes with both cases.
+ *
+ * Cross-validated balanced accuracy: the threshold fitted on one half of the images, applied to the other half,
+ * and the other way round. It shows how much the fitted threshold
+ * flatters the training set. The halves are stratified by class (see stratifiedHalves). Binary views only, since
+ * the all-classes view fits no threshold.
+ *
+ * Macro balanced accuracy: each class scored one-vs-rest (recall and specificity of "predicted this class"),
+ * averaged over classes with at least `minPositives` images, so rare classes with a handful of images do not swing it.
+ */
+export type AdvancedMetrics = {
+  auroc: number | null;
+  crossValidatedBa: number | null;
+  macroBa: number | null;
+  macroClasses: number;
+};
+
+export function auroc(pairs: { score: number; positive: boolean }[]): number | null {
+  const pos = pairs.filter((p) => p.positive).map((p) => p.score);
+  const neg = pairs.filter((p) => !p.positive).map((p) => p.score);
+  if (!pos.length || !neg.length) return null;
+  // Rank-sum form of Mann-Whitney U, with average ranks for ties: O(n log n).
+  const all = pairs.map((p) => ({ s: p.score, pos: p.positive })).sort((a, b) => a.s - b.s);
+  let rankSumPos = 0;
+  for (let i = 0; i < all.length; ) {
+    let j = i;
+    while (j + 1 < all.length && all[j + 1].s === all[i].s) j++;
+    const avgRank = (i + j) / 2 + 1;
+    for (let k = i; k <= j; k++) if (all[k].pos) rankSumPos += avgRank;
+    i = j + 1;
+  }
+  const u = rankSumPos - (pos.length * (pos.length + 1)) / 2;
+  return u / (pos.length * neg.length);
+}
+
+/** A stable, well-mixed 32-bit hash of an id: FNV-1a, then MurmurHash3's finalizer so every bit depends on every character. */
+export function mixedHash(id: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < id.length; i++) {
+    h ^= id.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35);
+  h ^= h >>> 16;
+  return h >>> 0;
+}
+
+/**
+ * Splits rows into two fixed halves, stratified by class: within positives and within negatives, rows are ordered
+ * by a mixed hash of their id and dealt alternately. Each half gets about half of each class, however the images
+ * are named, and the split never changes for the same images.
+ */
+export function stratifiedHalves(rows: Row[]): [Row[], Row[]] {
+  const halves: [Row[], Row[]] = [[], []];
+  for (const group of [rows.filter((r) => r.gtPositive), rows.filter((r) => !r.gtPositive)]) {
+    const ordered = [...group].sort((x, y) => mixedHash(x.id) - mixedHash(y.id) || (x.id < y.id ? -1 : 1));
+    ordered.forEach((r, i) => halves[i % 2].push(r));
+  }
+  return halves;
+}
+
+function balancedAccuracyAt(rows: Row[], threshold: number): { tp: number; fn: number; tn: number; fp: number } {
+  const c = { tp: 0, fn: 0, tn: 0, fp: 0 };
+  for (const r of rows) {
+    const call = (r.score as number) >= threshold;
+    if (r.gtPositive) call ? c.tp++ : c.fn++;
+    else call ? c.fp++ : c.tn++;
+  }
+  return c;
+}
+
+export function crossValidatedBa(rows: Row[]): number | null {
+  const scored = rows.filter((r) => r.status === "scored" && r.score != null && r.gtPositive !== undefined);
+  const halves = stratifiedHalves(scored);
+  const total = { tp: 0, fn: 0, tn: 0, fp: 0 };
+  for (const [fit, score] of [
+    [halves[0], halves[1]],
+    [halves[1], halves[0]],
+  ]) {
+    const t = fitThreshold(fit);
+    if (t == null) return null; // a half without both positives and negatives cannot fit a threshold
+    const c = balancedAccuracyAt(score, t);
+    total.tp += c.tp;
+    total.fn += c.fn;
+    total.tn += c.tn;
+    total.fp += c.fp;
+  }
+  const pos = total.tp + total.fn;
+  const neg = total.tn + total.fp;
+  if (!pos || !neg) return null;
+  return (total.tp / pos + total.tn / neg) / 2;
+}
+
+export function macroBalancedAccuracy(rows: Row[], groups: string[], minPositives = 3): { value: number | null; classes: number } {
+  const scored = rows.filter((r) => r.status === "scored" && r.pred != null && r.gt != null);
+  const bas: number[] = [];
+  for (const g of groups) {
+    const pos = scored.filter((r) => r.gt === g);
+    const neg = scored.filter((r) => r.gt !== g);
+    if (pos.length < minPositives || !neg.length) continue;
+    const recall = pos.filter((r) => r.pred === g).length / pos.length;
+    const specificity = neg.filter((r) => r.pred !== g).length / neg.length;
+    bas.push((recall + specificity) / 2);
+  }
+  return { value: bas.length ? bas.reduce((a, b) => a + b, 0) / bas.length : null, classes: bas.length };
+}
+
+export function computeAdvanced(rows: Row[], target: Target, mapping: ClassMapping, view: View, minPositives = 3): AdvancedMetrics {
+  const scored = rows.filter((r) => r.status === "scored");
+  const groups = groupsFor(target, mapping);
+  let au: number | null;
+  if (view.mode === "binary") {
+    au = auroc(scored.filter((r) => r.score != null).map((r) => ({ score: r.score as number, positive: !!r.gtPositive })));
+  } else {
+    const per = groups.map((g) => auroc(scored.map((r) => ({ score: r.probs[g] ?? 0, positive: r.gt === g })))).filter((x): x is number => x != null);
+    au = per.length ? per.reduce((a, b) => a + b, 0) / per.length : null;
+  }
+  // In a binary view the prediction is the threshold call, so score the classes that call distinguishes.
+  const macroRows =
+    view.mode === "binary"
+      ? scored.map((r) => ({ ...r, gt: r.gtPositive ? "pos" : "neg", pred: r.predPositive ? "pos" : "neg" }))
+      : scored;
+  const macro = macroBalancedAccuracy(macroRows, view.mode === "binary" ? ["pos", "neg"] : groups, minPositives);
+  return { auroc: au, crossValidatedBa: view.mode === "binary" ? crossValidatedBa(scored) : null, macroBa: macro.value, macroClasses: macro.classes };
+}

@@ -553,3 +553,29 @@ test("a file dropped while viewing an earlier version, or outside any drop zone,
   await expect(page.locator("[data-peek-banner]")).toBeVisible();
   await expect(page.locator('[data-panel="prompt"] ol > li')).toHaveCount(0);
 });
+
+test("advanced metrics are off by default and toggled from the ⋯ menu", async ({ page }) => {
+  await open(page);
+  await expect(page.locator("[data-advanced-metrics]")).toHaveCount(0);
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  const toggle = page.getByRole("menuitemcheckbox", { name: "Advanced metrics" });
+  await expect(toggle).toHaveAttribute("aria-checked", "false");
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-checked", "true");
+  await page.keyboard.press("Escape");
+  const trainAdv = train(page).locator("[data-advanced-metrics]");
+  await expect(trainAdv).toContainText("AUROC");
+  await expect(trainAdv).toContainText("Macro balanced accuracy");
+  await expect(trainAdv).toContainText(/AUROC\s*\d+\.\d%/);
+  // the all-classes view fits no threshold, so cross-validation does not apply there
+  await expect(trainAdv).toContainText("binary views only");
+  await expect(testPanel(page).locator("[data-advanced-metrics]")).toContainText("training set only");
+  // a one-vs-rest view fits a threshold on the training set, so it is cross-validated
+  await train(page).getByRole("combobox", { name: "Results view" }).selectOption("2");
+  await expect(trainAdv).toContainText(/Cross-validated BA\s*\d+\.\d%/);
+  await trainAdv.getByRole("button", { name: "About cross-validated ba" }).hover();
+  await expect(page.getByRole("tooltip")).toContainText("fitted on one half");
+  // the choice is remembered
+  await page.reload();
+  await expect(train(page).locator("[data-advanced-metrics]")).toBeVisible({ timeout: 30_000 });
+});

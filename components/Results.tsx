@@ -1,8 +1,9 @@
 "use client";
 import { Layers, RotateCcw } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { Analysis, ThresholdInfo } from "@/lib/analysis";
-import { ALL, groupsFor, type Target } from "@/lib/metrics";
+import { pairedRows } from "@/lib/compare";
+import { ALL, computeAdvanced, groupsFor, type Target } from "@/lib/metrics";
 import { useStore } from "@/lib/store";
 import type { ClassMapping } from "@/lib/types";
 import { ChartCard, ConfusionChart, Histogram, LegendKey, PrChart } from "./charts";
@@ -40,8 +41,54 @@ function Tile({ label, value, sub, delta, hero, title }: { label: string; value:
 
 const BA_HELP = "Balanced accuracy: the mean of per-class recall. For a yes/no label this is (sensitivity + specificity) / 2. Unlike accuracy it does not reward always guessing the common class.";
 
-/** Metric tiles. Deltas compare against the comparison version, both measured on the images scored in both runs. */
+/** Core metric tiles, plus the advanced row when it is switched on in the ⋯ menu. */
 export function MetricTiles({ a, mapping }: { a: Analysis; mapping: ClassMapping }) {
+  const advanced = useStore((s) => s.settings.advancedMetrics);
+  return (
+    <div className="space-y-2">
+      <CoreTiles a={a} mapping={mapping} />
+      {advanced && <AdvancedTiles a={a} mapping={mapping} />}
+    </div>
+  );
+}
+
+const ADVANCED_HELP = {
+  auroc: "The chance that a random positive image scores higher than a random negative one. It ignores the threshold, so it measures how well the scores rank images. 50% is chance, 100% is perfect. In the all-classes view it is averaged one-vs-rest over classes.",
+  cv: "The threshold is fitted on one half of the images and applied to the other half, then the other way round. Compare it with balanced accuracy: a big gap means the fitted threshold flatters this set. Training set only, binary views only (the all-classes view fits no threshold).",
+  macro: "Each class scored one-vs-rest (recall and specificity of predicting that class), averaged over classes with at least 3 images. Small classes count as much as large ones, and classes with too few images to judge are left out.",
+};
+
+function AdvancedTiles({ a, mapping }: { a: Analysis; mapping: ClassMapping }) {
+  const now = useMemo(() => computeAdvanced(a.rows, a.target, mapping, a.view), [a.rows, a.target, mapping, a.view]);
+  // Deltas: both versions on the images scored in both, like the core tiles.
+  const paired = useMemo(() => {
+    if (!a.baseline) return null;
+    const p = pairedRows(a.baseline.rows, a.rows);
+    return { before: computeAdvanced(p.before, a.target, mapping, a.view), after: computeAdvanced(p.after, a.target, mapping, a.view) };
+  }, [a.baseline, a.rows, a.target, mapping, a.view]);
+  const d = (key: "auroc" | "crossValidatedBa" | "macroBa") => {
+    const x = paired?.after[key];
+    const y = paired?.before[key];
+    return x != null && y != null ? x - y : null;
+  };
+  const cvApplies = a.role === "train" && a.view.mode === "binary";
+  return (
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3" data-advanced-metrics>
+      <Tile label="AUROC" value={fmtPct(now.auroc)} delta={d("auroc")} sub="ranking quality, any threshold" title={ADVANCED_HELP.auroc} />
+      <Tile
+        label="Cross-validated BA"
+        value={cvApplies ? fmtPct(now.crossValidatedBa) : "—"}
+        delta={cvApplies ? d("crossValidatedBa") : null}
+        sub={cvApplies ? (now.crossValidatedBa == null ? "needs both classes in each half" : "threshold fitted on the other half") : a.role === "test" ? "training set only" : "binary views only"}
+        title={ADVANCED_HELP.cv}
+      />
+      <Tile label="Macro balanced accuracy" value={fmtPct(now.macroBa)} delta={d("macroBa")} sub={`${now.macroClasses} class${now.macroClasses === 1 ? "" : "es"} with ≥ 3 images`} title={ADVANCED_HELP.macro} />
+    </div>
+  );
+}
+
+/** Metric tiles. Deltas compare against the comparison version, both measured on the images scored in both runs. */
+function CoreTiles({ a, mapping }: { a: Analysis; mapping: ClassMapping }) {
   const m = a.metrics;
   const b = a.baseline;
   const d = (key: "balancedAccuracy" | "accuracy" | "recall" | "specificity" | "precision" | "coverage" | "accuracyAboveCutoff") => {

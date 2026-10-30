@@ -109,4 +109,6 @@ export type Settings = {
   apiKey: string;
   model: string;
   concurrency: number;
+  /** Show AUROC, cross-validated and macro balanced accuracy under the core metrics. */
+  advancedMetrics: boolean;
 };
