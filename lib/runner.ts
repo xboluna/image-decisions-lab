@@ -1,9 +1,10 @@
 "use client";
 import { db } from "./db";
-import { blobToDataUrl, decodeRgb, encodeRgb } from "./image";
+import { blobToDataUrl } from "./image";
 import { modelInfo } from "./models";
 import { answerProbabilities, decide } from "./openrouter";
-import { applyOps, type ImageView, type Rgb } from "./ops";
+import type { Decoded } from "./decodeImage";
+import type { ImageView } from "./ops";
 import { buildQuestion, buildState, exampleViews, imagesPerRequest, inferenceKey, JPEG_QUALITY, promptViews, questionId } from "./prompt";
 import type { Dataset, Inference, LabelSchema, Prompt } from "./types";
 
@@ -22,24 +23,33 @@ export function imageLimitProblem(prompt: Prompt, model: string): string | null 
 }
 
 /** Decoded source images, kept for one run so several views of one image decode it once. */
-type Decoded = Map<string, Promise<Rgb>>;
+type DecodedCache = Map<string, Promise<Decoded>>;
 
-function source(hash: string, cache: Decoded): Promise<Rgb> {
+function source(hash: string, cache: DecodedCache): Promise<Decoded> {
   let p = cache.get(hash);
   if (!p) {
-    p = db.getImage(hash).then((blob) => {
+    p = (async () => {
+      const blob = await db.getImage(hash);
       if (!blob) throw new Error("An image is missing from this browser's storage. Re-import the dataset.");
-      return decodeRgb(blob);
-    });
+      // Loaded on first use so the WebAssembly decoder stays out of the initial page.
+      const { decodeToRgb } = await import("./decodeImage");
+      return decodeToRgb(new Uint8Array(await blob.arrayBuffer()));
+    })();
     cache.set(hash, p);
   }
   return p;
 }
 
+/** The exact JPEG the model is sent for one view of a stored image (lib/modelImage.ts; Pillow-identical). */
+export async function modelJpeg(hash: string, view: ImageView, prompt: Prompt, cache: DecodedCache = new Map()) {
+  const { renderView } = await import("./modelImage");
+  return renderView(await source(hash, cache), { ops: view.ops, regions: prompt.regions ?? [], enlarge: view.enlarge }, prompt.imageMaxSide, JPEG_QUALITY);
+}
+
 /** One view of an image, as the JPEG data URL sent to the model. */
-export async function encodeView(hash: string, view: ImageView, prompt: Prompt, cache: Decoded = new Map()): Promise<string> {
-  const { image } = applyOps(await source(hash, cache), view.ops, prompt.regions ?? []);
-  return blobToDataUrl(await encodeRgb(image, prompt.imageMaxSide, JPEG_QUALITY, view.enlarge));
+async function encodeView(hash: string, view: ImageView, prompt: Prompt, cache: DecodedCache): Promise<string> {
+  const { jpeg } = await modelJpeg(hash, view, prompt, cache);
+  return blobToDataUrl(new Blob([jpeg as BlobPart], { type: "image/jpeg" }));
 }
 
 /**
@@ -80,7 +90,7 @@ export async function runInference(opts: {
   if (!todo.length) return progress;
   if (!opts.apiKey) throw new Error("Add an OpenRouter API key in Settings to score images that are not cached yet.");
 
-  const decoded: Decoded = new Map();
+  const decoded: DecodedCache = new Map();
   let exampleUrls: string[][] | null = null;
   const examples = async () =>
     (exampleUrls ??= await Promise.all(prompt.examples.map((e) => Promise.all(exampleViews(e).map((v) => encodeView(e.imageHash, v, prompt, decoded))))));
@@ -95,7 +105,7 @@ export async function runInference(opts: {
       let inference: Inference;
       try {
         // A per-image cache, so one image's views share a decode without holding every image in memory.
-        const targetDecoded: Decoded = new Map();
+        const targetDecoded: DecodedCache = new Map();
         const target = await Promise.all(promptViews(prompt).map((v) => encodeView(item.imageHash, v, prompt, targetDecoded)));
         const state = buildState(prompt, await examples(), target);
         const result = await decide({ apiKey: opts.apiKey, model, state, questionId: qid, question, signal: opts.signal });

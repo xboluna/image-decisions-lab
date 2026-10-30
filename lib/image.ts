@@ -66,7 +66,7 @@ export function mimeFor(path: string): string {
   return "image/jpeg";
 }
 
-/** Decodes an image into RGB pixels. */
+/** Decodes an image into RGB pixels with the browser, for on-screen previews (images sent to the model use lib/decodeImage.ts). */
 export async function decodeRgb(blob: Blob): Promise<Rgb> {
   const bitmap = await decode(blob);
   const canvas = canvasFor(bitmap.width, bitmap.height);
@@ -82,31 +82,4 @@ export async function decodeRgb(blob: Blob): Promise<Rgb> {
     data[j + 2] = rgba[i + 2];
   }
   return { width: canvas.width, height: canvas.height, data };
-}
-
-/** RGB pixels onto a canvas, resized so the longest side is maxSide (smaller images only grow when `enlarge`). */
-export function rgbToCanvas(img: Rgb, maxSide: number, enlarge = false): OffscreenCanvas | HTMLCanvasElement {
-  const longest = Math.max(img.width, img.height);
-  const scale = longest > maxSide || enlarge ? maxSide / longest : 1;
-  const src = canvasFor(img.width, img.height);
-  const sctx = src.getContext("2d") as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
-  const rgba = new ImageData(img.width, img.height);
-  for (let i = 0, j = 0; j < img.data.length; i += 4, j += 3) {
-    rgba.data[i] = img.data[j];
-    rgba.data[i + 1] = img.data[j + 1];
-    rgba.data[i + 2] = img.data[j + 2];
-    rgba.data[i + 3] = 255;
-  }
-  sctx.putImageData(rgba, 0, 0);
-  if (scale === 1) return src;
-  const out = canvasFor(Math.max(1, Math.round(img.width * scale)), Math.max(1, Math.round(img.height * scale)));
-  const octx = out.getContext("2d") as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
-  octx.imageSmoothingQuality = "high";
-  octx.drawImage(src as CanvasImageSource, 0, 0, out.width, out.height);
-  return out;
-}
-
-/** Encodes RGB pixels as the JPEG sent to the model. */
-export async function encodeRgb(img: Rgb, maxSide: number, quality: number, enlarge = false): Promise<Blob> {
-  return toJpeg(rgbToCanvas(img, maxSide, enlarge), quality);
 }
