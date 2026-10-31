@@ -619,6 +619,13 @@ test("the model is part of the prompt: switching it makes a new version, and swi
   await picker.selectOption("perplexity/pplx-decider-v1.2");
   await expect(promptStep).toHaveText(before);
   await expect(train(page).getByText("All 27 answers already cached")).toBeVisible();
+
+  // "Other model id…" belongs to the prompt it was picked on: another prompt shows its listed model
+  await picker.selectOption("__custom__");
+  await expect(page.getByLabel("Custom model id")).toBeVisible();
+  await choosePrompt(page, "50 ml tubes v1");
+  await expect(picker).toHaveValue("perplexity/pplx-decider-v1.2");
+  await expect(page.getByLabel("Custom model id")).toHaveCount(0);
 });
 
 test("a downloaded prompt carries its model, and importing it restores the model", async ({ page }) => {

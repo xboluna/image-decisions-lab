@@ -33,14 +33,16 @@ export function SettingsCard() {
   const setSettings = useStore((s) => s.setSettings);
   // The model belongs to the selected prompt: picking one edits the prompt.
   const model = useStore(activeModel);
+  const promptId = useStore((s) => s.selection.prompt);
   const setPromptModel = useStore((s) => s.setPromptModel);
   const peeking = useStore((s) => !!s.peek);
   const [show, setShow] = useState(false);
   const [draft, setDraft] = useState(settings.apiKey);
   const { check, run, setCheck } = useKeyCheck();
   const known = DECISION_MODELS.some((m) => m.id === model);
-  const [customPicked, setCustom] = useState(false);
-  const custom = customPicked || !known;
+  // "Other model id…" applies to the prompt it was picked on; another prompt shows its own model in the list.
+  const [customFor, setCustomFor] = useState<{ prompt: string | null } | null>(null);
+  const custom = customFor?.prompt === promptId || !known;
 
   useEffect(() => {
     setDraft(settings.apiKey);
@@ -107,8 +109,8 @@ export function SettingsCard() {
           <select
             value={custom ? CUSTOM : model}
             onChange={(e) => {
-              if (e.target.value === CUSTOM) return setCustom(true);
-              setCustom(false);
+              if (e.target.value === CUSTOM) return setCustomFor({ prompt: promptId });
+              setCustomFor(null);
               setPromptModel(e.target.value);
             }}
             disabled={peeking}
