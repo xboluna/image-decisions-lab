@@ -23,7 +23,9 @@ local storage. Model calls go straight from the browser to `openrouter.ai`. Ther
    image. Edits are stored as operations on the original image, included in the prompt hash, and exported and
    imported with the prompt.
 3. **Settings.** Paste an OpenRouter key (checked against `/api/v1/key`, which shows the spending limit) and pick
-   a decision model. The key is saved client-side, and never goes anywhere.
+   the prompt's decision model. The key is saved client-side, and never goes anywhere. The model belongs to the
+   prompt: it is saved, duplicated, exported and imported with it, and a model change is a prompt change (a new
+   version, compared against the last one). New prompts start with the last model picked.
 4. **Score the training set.** Accuracy, balanced accuracy, the score histogram, precision-recall curves and the
    confusion matrix. Optionally choose (or fit) a threshold to maximize balanced accuracy. Turn on
    **Advanced metrics** in the ⋯ menu for AUROC, cross-validated balanced accuracy (threshold fitted on one half
@@ -43,6 +45,18 @@ local storage. Model calls go straight from the browser to `openrouter.ai`. Ther
    train / test / holdout / val get that role). Review what was found, adjust roles, and import it all at once.
    An exported experiment also restores the model's saved answers onto the same dataset version, so its
    results show without scoring again.
+
+## Hashes
+
+- **Dataset hash**: the images, labels and label schema.
+- **Prompt hash** (the prompt version shown everywhere): `sha256({content, model})`, so the same prompt sent to
+  another model is another version.
+- **Content hash**: everything that shapes the request (template version, image pipeline and size, system prompt,
+  question, examples, regions and views), without the model. `prompt.json` records both hashes.
+- **Cache key** of one answer: `sha256({prompt: content hash, model, image})`. Answers are never reused across
+  models, and switching back to a model already scored brings its answers back without new calls. Prompts, runs
+  and exports from before prompts carried their model keep their cached answers: they are given the model they
+  were scored with.
 
 ## Pixel parity
 

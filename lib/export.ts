@@ -6,7 +6,7 @@ import { sha256Bytes, shortHash } from "./hash";
 import { manifestJsonl } from "./manifest";
 import { pairedRows } from "./compare";
 import { ALL, computeAdvanced } from "./metrics";
-import { buildQuestion, buildState, exampleViews, IMAGE_PIPELINE, JPEG_QUALITY, promptViews, questionId, STATE_TEMPLATE_VERSION } from "./prompt";
+import { buildQuestion, buildState, contentHash, exampleViews, IMAGE_PIPELINE, JPEG_QUALITY, promptViews, questionId, STATE_TEMPLATE_VERSION } from "./prompt";
 import { modelJpeg } from "./runner";
 import type { ClassMapping, Dataset, Prompt } from "./types";
 
@@ -79,10 +79,14 @@ function sentPath(i: number, fileName: string) {
   return `sent/${String(i + 1).padStart(2, "0")}-${(fileName.split("/").pop() ?? "image").replace(/\.[^.]+$/, "")}.jpg`;
 }
 
-export function promptRecord(prompt: Prompt, hash: string) {
+function promptRecord(prompt: Prompt, hash: string, content: string) {
   return {
     name: prompt.name,
+    /** The prompt version: its content and its model. */
     hash: `sha256:${hash}`,
+    /** The prompt without its model; with the model and an image, it keys a cached answer. */
+    content_hash: `sha256:${content}`,
+    model: prompt.model ?? null,
     state_template_version: STATE_TEMPLATE_VERSION,
     image: {
       max_side: prompt.imageMaxSide,
@@ -101,7 +105,7 @@ export function promptRecord(prompt: Prompt, hash: string) {
     views: promptViews(prompt),
     /** The exact request body sent per image, with images written as references. */
     request_preview: {
-      model: "<model>",
+      model: prompt.model ?? "<model>",
       state: buildState(
         prompt,
         prompt.examples.map((e, i) => exampleViews(e).map((v, k, all) => `<${examplePath(i, e.fileName)}${all.length > 1 || v.ops.length ? ` view ${k + 1}` : ""} as JPEG data URL>`)),
@@ -124,7 +128,7 @@ async function addPrompt(zip: JSZip, prompt: Prompt, hash: string) {
     zip.file(sentPath(i, e.fileName), out.jpeg);
     sent.push({ file: sentPath(i, e.fileName), source_file: examplePath(i, e.fileName), sha256: await sha256Bytes(out.jpeg), width: out.width, height: out.height, pixel_exact: out.exact });
   }
-  zip.file("prompt.json", JSON.stringify({ ...promptRecord(prompt, hash), sent_examples: sent, restore: prompt }, null, 2));
+  zip.file("prompt.json", JSON.stringify({ ...promptRecord(prompt, hash, await contentHash(prompt)), sent_examples: sent, restore: prompt }, null, 2));
 }
 
 export async function exportPrompt(prompt: Prompt, hash: string) {
@@ -261,7 +265,7 @@ function comparisonRecord(a: Analysis, mapping: ClassMapping, advanced: boolean)
 
 function metricsRecord(a: Analysis, threshold: ThresholdInfo, mapping: ClassMapping, advanced: boolean) {
   return {
-    run: { id: a.run.id, status: a.run.status, started_at: a.run.startedAt, finished_at: a.run.finishedAt, model: a.run.model, prompt_hash: `sha256:${a.run.promptHash}`, dataset_hash: `sha256:${a.run.datasetHash}`, cost_usd: a.run.costUsd, cached: a.run.cachedCount },
+    run: { id: a.run.id, status: a.run.status, started_at: a.run.startedAt, finished_at: a.run.finishedAt, model: a.run.model, prompt_hash: `sha256:${a.run.promptHash}`, content_hash: `sha256:${a.run.contentHash}`, dataset_hash: `sha256:${a.run.datasetHash}`, cost_usd: a.run.costUsd, cached: a.run.cachedCount },
     stale: a.stale,
     view: a.view.mode === "binary" ? { mode: "binary", positive_class: a.view.positive } : { mode: "multiclass" },
     threshold: { value: threshold.value, fitted_on_training_set: threshold.fitted, source: threshold.source, meaning: a.view.mode === "binary" ? "score >= threshold is called positive" : "answers below this top-class probability are flagged for review" },
@@ -353,13 +357,13 @@ function readme(e: { prompt: { name: string; hash: string }; model: string; expo
 Exported from ${TOOL.name} ${TOOL.version} on ${e.exported_at}.
 
 - \`experiment.json\`: model, prompt hash, dataset hashes, class mapping, threshold, headline metrics.
-- \`prompt/prompt.json\`: the full prompt, its hash, the question and a preview of the exact request body; \`prompt/examples/\` holds the reference images.
+- \`prompt/prompt.json\`: the full prompt with its model, its hash, the question and a preview of the exact request body; \`prompt/examples/\` holds the reference images.
 - \`datasets/{train,test}/\`: \`metadata.jsonl\` + \`dataset.json\` (Hugging Face ImageFolder layout) with each dataset's hash.
 - \`results/{train,test}/predictions.jsonl\`: one line per image with the label, the model's raw answer, probabilities, score, prediction, outcome, cost and latency.
 - \`results/{train,test}/predictions.csv\`: the same, flattened.
 - \`results/{train,test}/metrics.json\`: accuracy, balanced accuracy, per-class precision and recall, confusion matrix, precision-recall curves and the score histogram; the version compared against and both versions' metrics on the images scored in both; and, when chosen, advanced metrics (AUROC, cross-validated and macro balanced accuracy).
 - \`results/{train,test}/charts/*.svg\`: the charts as shown.
 
-Model: ${e.model}. Prompt hash: ${e.prompt.hash}.
+Model: ${e.model}. Prompt hash (its content and the model): ${e.prompt.hash}.
 `;
 }

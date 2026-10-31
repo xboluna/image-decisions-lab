@@ -7,7 +7,7 @@ import { db } from "@/lib/db";
 import { exportDataset } from "@/lib/export";
 import { computeMetrics, fitThreshold, scoreRows, viewFor, ALL } from "@/lib/metrics";
 import { inferenceKey } from "@/lib/prompt";
-import { datasetMismatch, runBlockers, useStore, type Role } from "@/lib/store";
+import { activeModel, datasetMismatch, runBlockers, useStore, type Role } from "@/lib/store";
 import type { Dataset } from "@/lib/types";
 import { DatasetBrowser, emptyFilters, type ColorBy, type Filters } from "./DatasetBrowser";
 import { ComparisonBar } from "./ComparisonBar";
@@ -15,20 +15,20 @@ import { ChartsRow, MetricTiles, ViewControls } from "./Results";
 import { UploadDialog } from "./UploadDialog";
 import { Button, Card, cx, Field, fmtPct, fmtUsd, HashChip, inputClass, MenuItem, Modal, Popover, ProgressBar, timeAgo } from "./ui";
 
-function useCacheStatus(dataset: Dataset | undefined, hash: string | undefined, model: string, version: number) {
+function useCacheStatus(dataset: Dataset | undefined, content: string | undefined, model: string, version: number) {
   const [cached, setCached] = useState<number | null>(null);
   useEffect(() => {
-    if (!dataset || !hash) return setCached(null);
+    if (!dataset || !content) return setCached(null);
     let live = true;
     void (async () => {
-      const keys = await Promise.all(dataset.items.map((i) => inferenceKey(hash, model, i.imageHash)));
+      const keys = await Promise.all(dataset.items.map((i) => inferenceKey(content, model, i.imageHash)));
       const hits = await db.getInferences(keys);
       if (live) setCached(hits.filter((h) => h?.ok).length);
     })();
     return () => {
       live = false;
     };
-  }, [dataset, hash, model, version]);
+  }, [dataset, content, model, version]);
   return cached;
 }
 
@@ -125,7 +125,7 @@ function RunHistory({ dataset, role }: { dataset: Dataset; role: Role }) {
   const promptHashes = useStore((s) => s.promptHashes);
   const selection = useStore((s) => s.selection);
   const datasets = useStore((s) => s.datasets);
-  const model = useStore((s) => s.settings.model);
+  const model = useStore(activeModel);
   const mappings = useStore((s) => s.mappings);
   const [open, setOpen] = useState(false);
   const mine = runs.filter((r) => r.datasetHash === dataset.hash && Object.keys(r.results).length).reverse();
@@ -270,7 +270,9 @@ export function DatasetPanel({ role, fillHeight }: { role: Role; fillHeight?: nu
   const dataset = datasets.find((d) => d.id === selection[role]);
   const prompt = exp.prompt;
   const hash = prompt ? promptHashes[prompt.id] : undefined;
-  const cached = useCacheStatus(dataset, hash, settings.model, runsLen + (live ? 0 : 1));
+  const content = useStore((s) => (prompt ? s.contentHashes[prompt.id] : undefined));
+  const model = useStore(activeModel);
+  const cached = useCacheStatus(dataset, content, model, runsLen + (live ? 0 : 1));
   const [uploadOpen, setUploadOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -418,7 +420,7 @@ export function DatasetPanel({ role, fillHeight }: { role: Role; fillHeight?: nu
                   ) : (
                     <span>
                       <b className="font-medium text-ink tabular">{uncached}</b> of {dataset.items.length} images need a model call
-                      {cached ? ` (${cached} cached)` : ""} · <span className="font-mono text-[11px]">{settings.model}</span>
+                      {cached ? ` (${cached} cached)` : ""} · <span className="font-mono text-[11px]">{model}</span>
                       {!settings.apiKey && <span className="text-warning-ink"> · add an API key in Settings</span>}
                     </span>
                   )}
@@ -438,7 +440,7 @@ export function DatasetPanel({ role, fillHeight }: { role: Role; fillHeight?: nu
               <AlertTriangle className="size-4 shrink-0" />
               <span className="min-w-0 flex-1">
                 Showing results from an earlier version: prompt <span className="font-mono">{analysis.run.promptHash.slice(0, 10)}</span> (“{analysis.run.promptName}”)
-                {analysis.run.model !== settings.model ? ` on ${analysis.run.model}` : ""}. The current prompt is <span className="font-mono">{hash?.slice(0, 10)}</span>. Score again to see the
+                {analysis.run.model !== model ? ` on ${analysis.run.model}` : ""}. The current prompt is <span className="font-mono">{hash?.slice(0, 10)}</span>. Score again to see the
                 effect of your changes.
               </span>
             </div>

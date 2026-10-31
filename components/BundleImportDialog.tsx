@@ -74,13 +74,18 @@ export function BundleImportDialog() {
     setError(null);
     try {
       const chosen: BundlePlan = { ...plan, datasets: plan.datasets.map((d, i) => ({ ...d, role: roles[i] })), prompt: usePrompt ? plan.prompt : null };
-      const r = await importBundle(chosen, { restoreAnswers: restoreChecked, existingPromptNames: useStore.getState().prompts.map((p) => p.name), onProgress: setProgress });
+      const before = useStore.getState();
+      const r = await importBundle(chosen, {
+        restoreAnswers: restoreChecked,
+        existingPromptNames: before.prompts.map((p) => p.name),
+        defaultModel: before.settings.model,
+        onProgress: setProgress,
+      });
       await hydrate();
       const s = useStore.getState();
       for (const d of r.datasets) if (d.role !== "skip") s.selectDataset(d.role, d.dataset.id);
+      // The imported prompt carries its model, so selecting it selects the model too.
       if (r.prompt) s.selectPrompt(r.prompt.id);
-      // The restored answers belong to the exported run's model; select it so they show as current.
-      if (r.restoredModel && r.restoredModel !== s.settings.model) s.setSettings({ model: r.restoredModel });
       setResult(r);
       setPhase("done");
     } catch (err) {
@@ -270,6 +275,12 @@ export function BundleImportDialog() {
               {result.prompt && (
                 <div className="text-ink-2">
                   <b className="font-medium text-ink">Prompt:</b> {result.prompt.name}
+                  {result.prompt.model && (
+                    <>
+                      {" "}
+                      · model <span className="font-mono text-[12px]">{result.prompt.model.split("/").pop()}</span>
+                    </>
+                  )}
                 </div>
               )}
               {result.restoredAnswers > 0 && (
@@ -278,7 +289,7 @@ export function BundleImportDialog() {
                   {result.restoredModel && (
                     <>
                       {" "}
-                      Model set to <span className="font-mono text-[12px]">{result.restoredModel.split("/").pop()}</span>, which produced them.
+                      The prompt file named no model, so the prompt uses <span className="font-mono text-[12px]">{result.restoredModel.split("/").pop()}</span>, which produced them.
                     </>
                   )}
                 </div>

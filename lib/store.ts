@@ -4,7 +4,7 @@ import { db } from "./db";
 import { shortHash, uid } from "./hash";
 import { ALL } from "./metrics";
 import { DEFAULT_MODEL } from "./models";
-import { defaultQuestion, promptHash, promptProblems } from "./prompt";
+import { contentHash, defaultQuestion, promptModel, promptProblems, upgradeRun, versionHash } from "./prompt";
 import { imageLimitProblem, runInference, type RunProgress } from "./runner";
 import type { ClassMapping, Dataset, Inference, LabelSchema, Prompt, PromptExample, Run, Settings } from "./types";
 import { compareSchemas } from "./manifest";
@@ -20,7 +20,10 @@ type State = {
   prompts: Prompt[];
   runs: Run[];
   inferences: Record<string, Inference>;
+  /** Prompt id -> prompt version hash (content and model). */
   promptHashes: Record<string, string>;
+  /** Prompt id -> content hash (the prompt without its model), which keys cached answers. */
+  contentHashes: Record<string, string>;
   selection: Selection;
   settings: Settings;
   /** Class grouping per target label key. */
@@ -47,6 +50,8 @@ type State = {
   selectDataset: (role: Role, id: string | null) => void;
   createPrompt: (base?: Partial<Prompt>) => Promise<Prompt>;
   updatePrompt: (id: string, patch: Partial<Prompt>) => void;
+  /** Sets the selected prompt's model (a prompt edit) and makes it the model new prompts start with. */
+  setPromptModel: (model: string) => void;
   duplicatePrompt: (id: string) => Promise<void>;
   addPrompt: (prompt: Prompt) => Promise<void>;
   deletePrompt: (id: string) => Promise<void>;
@@ -95,8 +100,9 @@ export const useStore = create<State>((set, get) => {
     });
 
   const rehash = async (prompt: Prompt) => {
-    const hash = await promptHash(prompt);
-    set((s) => ({ promptHashes: { ...s.promptHashes, [prompt.id]: hash } }));
+    const content = await contentHash(prompt);
+    const hash = await versionHash(content, promptModel(prompt, get().settings.model));
+    set((s) => ({ promptHashes: { ...s.promptHashes, [prompt.id]: hash }, contentHashes: { ...s.contentHashes, [prompt.id]: content } }));
   };
 
   const patchPrompt = (id: string, fn: (p: Prompt) => Prompt) => {
@@ -127,6 +133,7 @@ export const useStore = create<State>((set, get) => {
     runs: [],
     inferences: {},
     promptHashes: {},
+    contentHashes: {},
     selection: { train: null, test: null, prompt: null },
     settings: defaultSettings,
     mappings: {},
@@ -149,6 +156,23 @@ export const useStore = create<State>((set, get) => {
         db.listRuns(),
         db.getMeta<Pick<State, "selection" | "mappings" | "focus" | "thresholds" | "baselineKey">>("ui"),
       ]);
+      const settings = loadSettings();
+      // Prompts and runs saved before prompts carried their model: the prompt takes the model it was being scored
+      // with, and each run gets its version hash from its own model. Cached answers keep their keys.
+      for (const [i, p] of prompts.entries()) {
+        if (p.model?.trim()) continue;
+        prompts[i] = { ...p, model: settings.model };
+        await db.putPrompt(prompts[i]);
+      }
+      const renamed = new Map<string, string>();
+      for (const [i, r] of runs.entries()) {
+        const upgraded = await upgradeRun(r);
+        if (!upgraded) continue;
+        renamed.set(`${r.promptHash}|${r.model}`, `${upgraded.promptHash}|${r.model}`);
+        runs[i] = upgraded;
+        await db.putRun(upgraded);
+      }
+      const baselineKey = ui?.baselineKey ? (renamed.get(ui.baselineKey) ?? ui.baselineKey) : null;
       datasets.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
       prompts.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
       runs.sort((a, b) => a.startedAt.localeCompare(b.startedAt));
@@ -160,7 +184,7 @@ export const useStore = create<State>((set, get) => {
         datasets,
         prompts,
         runs,
-        settings: loadSettings(),
+        settings,
         selection: {
           train: has(selection.train, datasets) ?? datasets[0]?.id ?? null,
           test: has(selection.test, datasets) ?? datasets[1]?.id ?? null,
@@ -169,7 +193,7 @@ export const useStore = create<State>((set, get) => {
         mappings: ui?.mappings ?? {},
         focus: ui?.focus ?? ALL,
         thresholds: ui?.thresholds ?? {},
-        baselineKey: ui?.baselineKey ?? null,
+        baselineKey,
         peek: null,
       });
       await Promise.all(prompts.map(rehash));
@@ -221,6 +245,7 @@ export const useStore = create<State>((set, get) => {
         systemPrompt: "",
         imageMaxSide: 1024,
         examples: [],
+        model: get().settings.model,
         ...(schema ? defaultQuestion(schema) : { targetKey: "", targetType: "boolean", instructions: "", criteria: { true: "", false: "" } }),
         ...base,
       };
@@ -233,6 +258,15 @@ export const useStore = create<State>((set, get) => {
     updatePrompt(id, patch) {
       patchPrompt(id, (p) => ({ ...p, ...patch }));
     },
+    setPromptModel(model) {
+      if (get().peek) {
+        get().notify("You are viewing an earlier version. Switch back to edit your working prompt.", "error");
+        return;
+      }
+      get().setSettings({ model });
+      const id = get().selection.prompt;
+      if (id) patchPrompt(id, (p) => ({ ...p, model }));
+    },
     async duplicatePrompt(id) {
       const p = get().prompts.find((x) => x.id === id);
       if (!p) return;
@@ -242,7 +276,8 @@ export const useStore = create<State>((set, get) => {
       await get().createPrompt({ ...rest, name, examples: p.examples.map((e) => ({ ...e, id: uid("ex") })) });
       get().notify(`Duplicated as "${name}". Edits now go to the copy; the original stays as it was.`);
     },
-    async addPrompt(prompt) {
+    async addPrompt(imported) {
+      const prompt = imported.model?.trim() ? imported : { ...imported, model: get().settings.model };
       await db.putPrompt(prompt);
       set((s) => ({ prompts: [...s.prompts, prompt], selection: { ...s.selection, prompt: prompt.id }, focus: ALL }));
       await rehash(prompt);
@@ -343,7 +378,8 @@ export const useStore = create<State>((set, get) => {
         set((st) => ({ runErrors: { ...st.runErrors, [role]: blockers[0] ?? "Pick a dataset and a prompt first." } }));
         return;
       }
-      const hash = await promptHash(prompt);
+      const model = promptModel(prompt, s.settings.model);
+      const content = await contentHash(prompt);
       const controller = new AbortController();
       const run: Run = {
         id: uid("run"),
@@ -352,9 +388,10 @@ export const useStore = create<State>((set, get) => {
         datasetHash: dataset.hash,
         datasetName: dataset.name,
         promptId: prompt.id,
-        promptHash: hash,
+        promptHash: await versionHash(content, model),
+        contentHash: content,
         promptName: prompt.name,
-        model: s.settings.model,
+        model,
         targetKey: prompt.targetKey,
         startedAt: new Date().toISOString(),
         status: "running",
@@ -387,8 +424,8 @@ export const useStore = create<State>((set, get) => {
         const final = await runInference({
           dataset,
           prompt,
-          promptHash: hash,
-          model: s.settings.model,
+          contentHash: content,
+          model,
           apiKey: s.settings.apiKey,
           concurrency: s.settings.concurrency,
           signal: controller.signal,
@@ -465,12 +502,19 @@ export function runBlockers(s: Pick<State, "datasets" | "prompts" | "selection" 
   if (!dataset) return [`Pick or upload a ${role === "train" ? "training" : "test"} dataset.`];
   if (!prompt) return ["Create a prompt first."];
   const problems = promptProblems(prompt, dataset.schema);
-  const limit = imageLimitProblem(prompt, s.settings.model);
+  const model = promptModel(prompt, s.settings.model);
+  const limit = imageLimitProblem(prompt, model);
   if (limit) problems.push(limit);
   const mismatch = datasetMismatch(s);
   if (mismatch.blocking) problems.push(mismatch.message);
-  if (!s.settings.model.trim()) problems.push("Pick a model in Settings.");
+  if (!model.trim()) problems.push("Pick a model in Settings.");
   return problems;
+}
+
+/** The model of the selected prompt: what the next run is sent to. */
+export function activeModel(s: Pick<State, "prompts" | "selection" | "settings">): string {
+  const prompt = s.prompts.find((p) => p.id === s.selection.prompt);
+  return prompt ? promptModel(prompt, s.settings.model) : s.settings.model;
 }
 
 /** Training and test datasets must agree on the label being scored: same key, same type, same classes. */

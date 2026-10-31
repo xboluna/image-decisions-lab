@@ -11,7 +11,7 @@ import { imageSize, resizeJpeg } from "@/lib/image";
 import { modelInfo } from "@/lib/models";
 import { imagesPerRequest, promptProblems, promptViews } from "@/lib/prompt";
 import { importPromptZip } from "@/lib/promptImport";
-import { useStore } from "@/lib/store";
+import { activeModel, useStore } from "@/lib/store";
 import type { Dataset, LabelSchema, Prompt, PromptExample } from "@/lib/types";
 import { classColor } from "./colors";
 import { ImageEditor, OpsThumb, useRgb, ViewPreview, ViewsEditor, viewSummary } from "./ImageViews";
@@ -395,7 +395,7 @@ export function PromptBuilder() {
   const prompt = peek?.prompt ?? selected;
   const hash = peek?.hash ?? selectedHash;
   const train = useStore((s) => s.datasets.find((d) => d.id === s.selection.train));
-  const model = useStore((s) => s.settings.model);
+  const model = useStore(activeModel);
   const updatePrompt = useStore((s) => s.updatePrompt);
   const setTarget = useStore((s) => s.setTarget);
   const moveExample = useStore((s) => s.moveExample);
@@ -461,7 +461,7 @@ export function PromptBuilder() {
           <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">Prompt builder</div>
           <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-2">
             {peek ? <span className="truncate text-[17px] font-semibold tracking-tight">{prompt.name}</span> : <PromptPicker prompt={prompt} />}
-            <HashChip hash={hash} prefix="prompt" title="Prompt version (sha256 over everything sent to the model)" />
+            <HashChip hash={hash} prefix="prompt" title="Prompt version (sha256 over everything sent to the model, and the model)" />
           </div>
         </div>
       </div>

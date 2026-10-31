@@ -1,6 +1,6 @@
 import { sha256Json } from "./hash";
 import { describeOps, type ImageView } from "./ops";
-import type { ContentPart, LabelSchema, Prompt, PromptExample } from "./types";
+import type { ContentPart, LabelSchema, Prompt, PromptExample, Run } from "./types";
 
 /** Bumped whenever the way a prompt becomes a request changes, so old cached answers are never reused. */
 export const STATE_TEMPLATE_VERSION = 2;
@@ -82,8 +82,12 @@ export function buildState(prompt: Prompt, exampleImages: string[][], targetImag
   return parts;
 }
 
-/** The prompt version: every input that changes what the model is sent. The prompt's name never changes it. */
-export function promptHash(prompt: Prompt): Promise<string> {
+/**
+ * What the model is sent, without the model: every input that changes the request's state and question. The prompt's
+ * name never changes it. Cached answers are keyed by this and the model (inferenceKey), so answers stored before
+ * prompts carried their model stay valid.
+ */
+export function contentHash(prompt: Prompt): Promise<string> {
   const views = usesImageViews(prompt);
   return sha256Json({
     template: STATE_TEMPLATE_VERSION,
@@ -106,8 +110,35 @@ export function promptHash(prompt: Prompt): Promise<string> {
   });
 }
 
-export function inferenceKey(promptHashValue: string, model: string, imageHash: string): Promise<string> {
-  return sha256Json({ prompt: promptHashValue, model, image: imageHash });
+/** The model a prompt is sent to: its own, or `fallback` for a prompt saved before prompts carried one. */
+export function promptModel(prompt: Pick<Prompt, "model">, fallback: string): string {
+  return prompt.model?.trim() || fallback;
+}
+
+/** The prompt version from its content hash and model: a model change is a prompt change. */
+export function versionHash(content: string, model: string): Promise<string> {
+  return sha256Json({ content, model });
+}
+
+/** The prompt version: its content and the model it is sent to (`fallbackModel` when the prompt names none). */
+export async function promptHash(prompt: Prompt, fallbackModel: string): Promise<string> {
+  return versionHash(await contentHash(prompt), promptModel(prompt, fallbackModel));
+}
+
+/**
+ * Runs stored before prompts carried their model recorded the content hash as their prompt hash. Returns the run with
+ * its version hash and content hash (and its snapshot given the run's model), or null when it is already current.
+ */
+export async function upgradeRun(run: Run): Promise<Run | null> {
+  if (run.contentHash) return null;
+  const content = run.promptHash;
+  const snapshot = run.promptSnapshot && !run.promptSnapshot.model ? { ...run.promptSnapshot, model: run.model } : run.promptSnapshot;
+  return { ...run, contentHash: content, promptHash: await versionHash(content, run.model), ...(snapshot ? { promptSnapshot: snapshot } : {}) };
+}
+
+/** The key of one cached answer: the prompt's content hash, the model and the image. */
+export function inferenceKey(content: string, model: string, imageHash: string): Promise<string> {
+  return sha256Json({ prompt: content, model, image: imageHash });
 }
 
 /** Default question text for a label, used when a prompt is pointed at a new target. */

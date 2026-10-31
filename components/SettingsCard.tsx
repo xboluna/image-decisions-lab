@@ -3,7 +3,7 @@ import { AlertTriangle, CheckCircle2, Eye, EyeOff, KeyRound, Loader2, ShieldChec
 import { useEffect, useRef, useState } from "react";
 import { DECISION_MODELS, modelInfo } from "@/lib/models";
 import { checkKey, type KeyInfo } from "@/lib/openrouter";
-import { useStore } from "@/lib/store";
+import { activeModel, useStore } from "@/lib/store";
 import { Button, Card, cx, Field, inputClass } from "./ui";
 
 type Check = { state: "idle" } | { state: "checking" } | { state: "ok"; info: KeyInfo } | { state: "error"; message: string };
@@ -31,11 +31,18 @@ export function useKeyCheck() {
 export function SettingsCard() {
   const settings = useStore((s) => s.settings);
   const setSettings = useStore((s) => s.setSettings);
+  // The model belongs to the selected prompt: picking one edits the prompt.
+  const model = useStore(activeModel);
+  const promptId = useStore((s) => s.selection.prompt);
+  const setPromptModel = useStore((s) => s.setPromptModel);
+  const peeking = useStore((s) => !!s.peek);
   const [show, setShow] = useState(false);
   const [draft, setDraft] = useState(settings.apiKey);
   const { check, run, setCheck } = useKeyCheck();
-  const known = DECISION_MODELS.some((m) => m.id === settings.model);
-  const [custom, setCustom] = useState(!known);
+  const known = DECISION_MODELS.some((m) => m.id === model);
+  // "Other model id…" applies to the prompt it was picked on; another prompt shows its own model in the list.
+  const [customFor, setCustomFor] = useState<{ prompt: string | null } | null>(null);
+  const custom = customFor?.prompt === promptId || !known;
 
   useEffect(() => {
     setDraft(settings.apiKey);
@@ -98,14 +105,15 @@ export function SettingsCard() {
           </div>
         </div>
 
-        <Field label="Decision model" hint={modelInfo(settings.model)?.maxImages ? `Up to ${modelInfo(settings.model)?.maxImages} images per request` : undefined}>
+        <Field label="Decision model" hint={`Saved with the prompt${modelInfo(model)?.maxImages ? ` · up to ${modelInfo(model)?.maxImages} images per request` : ""}`}>
           <select
-            value={custom ? CUSTOM : settings.model}
+            value={custom ? CUSTOM : model}
             onChange={(e) => {
-              if (e.target.value === CUSTOM) return setCustom(true);
-              setCustom(false);
-              setSettings({ model: e.target.value });
+              if (e.target.value === CUSTOM) return setCustomFor({ prompt: promptId });
+              setCustomFor(null);
+              setPromptModel(e.target.value);
             }}
+            disabled={peeking}
             className={cx(inputClass, "h-8.5 py-0")}
             aria-label="Decision model"
           >
@@ -119,7 +127,7 @@ export function SettingsCard() {
         </Field>
         {custom && (
           <Field label="Model id" hint="Any model served by the Decisions API">
-            <input value={settings.model} onChange={(e) => setSettings({ model: e.target.value.trim() })} placeholder="vendor/model-name" className={cx(inputClass, "font-mono text-[12px]")} aria-label="Custom model id" />
+            <input value={model} onChange={(e) => setPromptModel(e.target.value.trim())} disabled={peeking} placeholder="vendor/model-name" className={cx(inputClass, "font-mono text-[12px]")} aria-label="Custom model id" />
           </Field>
         )}
         <Field label="Parallel requests" hint="Lower it if you hit rate limits">
@@ -129,7 +137,8 @@ export function SettingsCard() {
           </div>
         </Field>
         <p className="text-[11.5px] leading-snug text-muted">
-          The model is part of every cached answer&apos;s key: switching models never reuses another model&apos;s answers. Changing it shows the last results as out of date until you score again.
+          The model is part of the prompt: changing it makes a new prompt version, compared against the last one like any other edit, and it is saved in prompt
+          exports. Answers are never reused across models. Switching back to a model you already scored brings its cached answers back.
         </p>
       </div>
     </Card>

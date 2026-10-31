@@ -14,7 +14,7 @@ type Seed = {
   inferences: Inference[];
   selection: { train: string; test: string; prompt: string };
   mappings?: Record<string, ClassMapping>;
-  /** The model the seeded runs were scored with; selected on first load so the demo results show as current. */
+  /** The model the seeded runs were scored with: the seeded prompts' model, and the default for new prompts. */
   model?: string;
 };
 
@@ -56,7 +56,8 @@ export async function loadDemo(onProgress?: (text: string) => void): Promise<voi
       console.warn(`Demo dataset ${d.name} hashed to ${dataset.hash}, which differs from the seeded runs.`);
     }
   }
-  for (const p of seed.prompts) await db.putPrompt(p);
+  // The seeded prompts are scored with the seed's model; seeded runs get their version hashes when the store loads.
+  for (const p of seed.prompts) await db.putPrompt(p.model || !seed.model ? p : { ...p, model: seed.model });
   if (seed.inferences.length) await db.putInferences(seed.inferences);
   for (const r of seed.runs) await db.putRun(r);
   const ui = (await db.getMeta<Record<string, unknown>>("ui")) ?? {};

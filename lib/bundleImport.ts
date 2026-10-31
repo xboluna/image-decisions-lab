@@ -4,7 +4,7 @@ import { uid } from "./hash";
 import { isImagePath } from "./image";
 import { expandZips, importDataset, type FileEntry, type ImportProgress } from "./importer";
 import { MANIFEST_NAMES, normalizePath, parseCsv, parseJsonl } from "./manifest";
-import { inferenceKey } from "./prompt";
+import { inferenceKey, versionHash } from "./prompt";
 import { importPromptFiles } from "./promptImport";
 import type { Dataset, Inference, Prompt, Run } from "./types";
 
@@ -48,7 +48,8 @@ type Prediction = {
   cache_key: string | null;
 };
 
-type ExportedRun = { id: string; status: string; started_at: string; finished_at?: string; model: string; prompt_hash: string; dataset_hash: string; cost_usd: number };
+/** A run in metrics.json. Exports made before prompts carried their model have no content_hash: their prompt_hash is it. */
+type ExportedRun = { id: string; status: string; started_at: string; finished_at?: string; model: string; prompt_hash: string; content_hash?: string; dataset_hash: string; cost_usd: number };
 
 export type BundleResults = { role: "train" | "test"; run: ExportedRun; predictions: Prediction[] };
 
@@ -172,13 +173,21 @@ export type BundleImportResult = {
   prompt: Prompt | null;
   restoredRuns: number;
   restoredAnswers: number;
-  /** The model the restored answers came from, so it can be selected and the results show as current. */
+  /** Set when prompt.json named no model: the prompt took the model its restored answers came from. */
   restoredModel: string | null;
   warnings: string[];
 };
 
+type ImportOptions = {
+  restoreAnswers: boolean;
+  existingPromptNames: string[];
+  /** The model for a prompt whose prompt.json names none and has no restored answers to take one from. */
+  defaultModel: string;
+  onProgress?: (p: ImportProgress) => void;
+};
+
 /** Imports what the plan describes. Answers are restored only onto the exact dataset version they were scored on. */
-export async function importBundle(plan: BundlePlan, opts: { restoreAnswers: boolean; existingPromptNames: string[]; onProgress?: (p: ImportProgress) => void }): Promise<BundleImportResult> {
+export async function importBundle(plan: BundlePlan, opts: ImportOptions): Promise<BundleImportResult> {
   // All or nothing: if any step fails, the datasets, prompt and runs written so far are removed again, so a retry
   // never leaves duplicates. Images and cached answers are content-addressed, so leftovers of those are harmless.
   for (const role of ["train", "test"] as const) {
@@ -195,7 +204,7 @@ export async function importBundle(plan: BundlePlan, opts: { restoreAnswers: boo
 
 async function importAll(
   plan: BundlePlan,
-  opts: { restoreAnswers: boolean; existingPromptNames: string[]; onProgress?: (p: ImportProgress) => void },
+  opts: ImportOptions,
   written: { datasets: string[]; prompts: string[]; runs: string[] },
 ): Promise<BundleImportResult> {
   const warnings: string[] = [];
@@ -208,9 +217,23 @@ async function importAll(
   }
   let prompt: Prompt | null = null;
   let restoredModel: string | null = null;
+  // Answers belong to a dataset version, not a role: they are restored onto the imported dataset with the same hash,
+  // whatever role it was given in the review.
+  const restorable = opts.restoreAnswers && plan.prompt
+    ? plan.results.flatMap((res) => {
+        const target = imported.find((x) => x.dataset.hash === stripSha(res.run.dataset_hash));
+        if (!target) warnings.push(`The ${res.role} answers were scored on a dataset version that is not being imported, so they were not restored.`);
+        return target ? [{ res, target }] : [];
+      })
+    : [];
   if (plan.prompt) {
     const r = await importPromptFiles(plan.files, opts.existingPromptNames, plan.prompt.path);
     prompt = r.prompt;
+    if (!prompt.model) {
+      // A prompt.json from before prompts carried their model: take the model its answers came from.
+      restoredModel = restorable[0]?.res.run.model ?? null;
+      prompt = { ...prompt, model: restoredModel ?? opts.defaultModel };
+    }
     warnings.push(...r.warnings);
     await db.putPrompt(prompt);
     written.prompts.push(prompt.id);
@@ -218,29 +241,23 @@ async function importAll(
 
   let restoredRuns = 0;
   let restoredAnswers = 0;
-  if (opts.restoreAnswers && prompt) {
-    for (const res of plan.results) {
-      // Answers belong to a dataset version, not a role: restore them onto the imported dataset with the same hash,
-      // whatever role it was given in the review.
-      const target = imported.find((x) => x.dataset.hash === stripSha(res.run.dataset_hash));
-      if (!target) {
-        warnings.push(`The ${res.role} answers were scored on a dataset version that is not being imported, so they were not restored.`);
-        continue;
-      }
-      const promptHash = stripSha(res.run.prompt_hash);
+  if (prompt) {
+    for (const { res, target } of restorable) {
+      // The answers' cache keys use the prompt's content hash, which older exports recorded as their prompt hash.
+      const content = stripSha(res.run.content_hash ?? res.run.prompt_hash);
       const model = res.run.model;
       const items = new Set(target.dataset.items.map((i) => i.id));
       const inferences: Inference[] = [];
       const results: Record<string, string> = {};
       for (const p of res.predictions) {
         if (!items.has(p.file_name) || !p.raw_probabilities || p.error) continue;
-        const cacheKey = await inferenceKey(promptHash, model, p.image_sha256);
+        const cacheKey = await inferenceKey(content, model, p.image_sha256);
         if (p.cache_key && p.cache_key !== cacheKey) continue; // not this prompt, model and image
         results[p.file_name] = cacheKey;
         inferences.push({
           cacheKey,
           imageHash: p.image_sha256,
-          promptHash,
+          promptHash: content,
           model,
           ok: true,
           probabilities: p.raw_probabilities,
@@ -262,7 +279,8 @@ async function importAll(
         datasetHash: target.dataset.hash,
         datasetName: target.dataset.name,
         promptId: prompt.id,
-        promptHash,
+        promptHash: await versionHash(content, model),
+        contentHash: content,
         promptName: prompt.name,
         model,
         targetKey: prompt.targetKey,
@@ -270,14 +288,13 @@ async function importAll(
         finishedAt: res.run.finished_at,
         status: complete && res.run.status === "done" ? "done" : "cancelled",
         results,
-        promptSnapshot: prompt,
+        promptSnapshot: { ...prompt, model },
         cachedCount: inferences.length,
         errorCount: 0,
         costUsd: inferences.reduce((s, i) => s + i.usage.costUsd, 0),
       };
       await db.putRun(run);
       written.runs.push(run.id);
-      restoredModel = model;
       restoredRuns++;
       restoredAnswers += inferences.length;
     }
