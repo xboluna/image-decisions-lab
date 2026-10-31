@@ -484,7 +484,8 @@ test("the comparison bar names the baseline, and peeking shows that version unti
   await expect(page.getByLabel("Question")).toBeDisabled();
   await expect(train(page).getByRole("button", { name: "Score training set" })).toBeDisabled();
   await expect(train(page).locator("text=Balanced accuracy").first().locator("..").locator("..")).toContainText("▼");
-  await expect(page.locator("nav[aria-label=Experiment] > div").nth(1)).toContainText("c2f39c93");
+  // v1's version hash: its content and its model
+  await expect(page.locator("nav[aria-label=Experiment] > div").nth(1)).toContainText("3555daee");
 
   await page.locator("[data-peek-banner]").getByRole("button", { name: "Switch back" }).click();
   await expect(bar).toContainText("Comparing against");
@@ -573,7 +574,7 @@ test("an exported experiment imports into a fresh browser with its results, no s
   // A fresh browser profile with no demo.
   const fresh = await (await browser.newContext({ viewport: { width: 1600, height: 1000 } })).newPage();
   await fresh.route("**/demo/seed.json", (r) => r.fulfill({ status: 404, body: "" }));
-  // a browser set to another model: the import switches to the one that produced the answers
+  // a browser defaulting to another model: the imported prompt brings its own
   await fresh.addInitScript(() => localStorage.getItem("harness-studio.settings") || localStorage.setItem("harness-studio.settings", JSON.stringify({ model: "openai/gpt-6-luna-decisions" })));
   await fresh.goto("/");
   await fresh.locator('[data-panel="train"]').getByRole("button", { name: "Import experiment" }).click();
@@ -586,13 +587,59 @@ test("an exported experiment imports into a fresh browser with its results, no s
   await expect(plan).toContainText("48 answers");
   await dialog.getByRole("button", { name: "Import", exact: true }).click();
   await expect(dialog.locator("[data-bundle-result]")).toContainText("Restored 48 saved answers in 2 runs", { timeout: 60_000 });
-  await expect(dialog.locator("[data-bundle-result]")).toContainText("Model set to pplx-decider-v1.2");
+  await expect(dialog.locator("[data-bundle-result]")).toContainText("model pplx-decider-v1.2");
   await dialog.getByRole("button", { name: "Done" }).click();
   await expect(fresh.locator('[data-panel="train"]').getByText("All 27 answers already cached")).toBeVisible();
   await expect(fresh.locator('[data-panel="test"]').getByText("All 21 answers already cached")).toBeVisible();
   await expect(fresh.locator('[data-panel="train"]').getByText("Balanced accuracy").first()).toBeVisible();
   await expect(fresh.getByRole("button", { name: "Choose prompt" })).toContainText("50 ml tubes v2");
+  await expect(fresh.getByRole("combobox", { name: "Decision model" })).toHaveValue("perplexity/pplx-decider-v1.2");
   await fresh.context().close();
+});
+
+test("the model is part of the prompt: switching it makes a new version, and switching back finds the cached answers", async ({ page }) => {
+  await open(page);
+  const picker = page.getByRole("combobox", { name: "Decision model" });
+  const promptStep = page.locator('nav[aria-label="Experiment"] [title^="Prompt “"]');
+  await expect(picker).toHaveValue("perplexity/pplx-decider-v1.2");
+  const before = (await promptStep.textContent()) ?? "";
+
+  await picker.selectOption("openai/gpt-6-luna-decisions");
+  await expect(promptStep).not.toHaveText(before);
+  await expect(train(page).getByText(/27 of 27 images need a model call/)).toBeVisible();
+  // the earlier version is what this one is compared against
+  await expect(train(page).locator("[data-comparison]").getByRole("combobox", { name: "Version to compare against" })).toContainText(/50 ml tubes v2 · [0-9a-f]{8} · pplx-decider-v1\.2/);
+
+  // each prompt keeps its own model
+  await choosePrompt(page, "50 ml tubes v1");
+  await expect(picker).toHaveValue("perplexity/pplx-decider-v1.2");
+  await choosePrompt(page, "50 ml tubes v2");
+  await expect(picker).toHaveValue("openai/gpt-6-luna-decisions");
+
+  await picker.selectOption("perplexity/pplx-decider-v1.2");
+  await expect(promptStep).toHaveText(before);
+  await expect(train(page).getByText("All 27 answers already cached")).toBeVisible();
+});
+
+test("a downloaded prompt carries its model, and importing it restores the model", async ({ page }) => {
+  await open(page);
+  await page.getByRole("combobox", { name: "Decision model" }).selectOption("openai/gpt-6-luna-decisions");
+  await page.getByRole("button", { name: "Choose prompt" }).click();
+  const dl = page.waitForEvent("download");
+  await page.getByRole("button", { name: /^Download “50 ml tubes v2”/ }).click();
+  const bytes = readFileSync(await (await dl).path());
+  const json = JSON.parse(await (await JSZip.loadAsync(bytes)).file("prompt.json")!.async("string"));
+  expect(json.model).toBe("openai/gpt-6-luna-decisions");
+  expect(json.restore.model).toBe("openai/gpt-6-luna-decisions");
+  expect(json.request_preview.model).toBe("openai/gpt-6-luna-decisions");
+  expect(json.content_hash).toMatch(/^sha256:[0-9a-f]{64}$/);
+
+  // the default model moves on; the imported prompt keeps the one it was saved with
+  await choosePrompt(page, "50 ml tubes v1");
+  await page.getByRole("combobox", { name: "Decision model" }).selectOption("perplexity/pplx-decider-v1.2");
+  await page.getByLabel("Import prompt zip").setInputFiles({ name: "prompt.zip", mimeType: "application/zip", buffer: bytes });
+  await expect(page.getByRole("button", { name: "Choose prompt" })).toContainText("50 ml tubes v2 (imported)");
+  await expect(page.getByRole("combobox", { name: "Decision model" })).toHaveValue("openai/gpt-6-luna-decisions");
 });
 
 test("a plain folder with prompt.json and train/test datasets imports with roles from folder names", async ({ page }) => {

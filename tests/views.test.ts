@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildState, exampleViews, imagesPerRequest, promptHash, promptViews, usesImageViews } from "@/lib/prompt";
+import { buildState, exampleViews, imagesPerRequest, contentHash, promptViews, usesImageViews } from "@/lib/prompt";
 import type { Prompt } from "@/lib/types";
 
 const base: Prompt = {
@@ -25,7 +25,7 @@ describe("image views in the request", () => {
   it("leaves prompts without views exactly as before", async () => {
     expect(usesImageViews(base)).toBe(false);
     expect(usesImageViews({ ...base, views: [], regions: [] })).toBe(false);
-    expect(await promptHash({ ...base, views: [], regions: [] })).toBe(await promptHash(base));
+    expect(await contentHash({ ...base, views: [], regions: [] })).toBe(await contentHash(base));
     expect(buildState(base, [["E"]], ["T"])).toEqual([
       { type: "text", text: "System." },
       { type: "text", text: "Reference example 1 — POSITIVE (the answer is yes)." },
@@ -52,14 +52,14 @@ describe("image views in the request", () => {
     expect(imagesPerRequest({ ...withViews, examples: [edited] })).toBe(3);
   });
   it("changes the prompt hash whenever what is sent changes", async () => {
-    const h = await promptHash(withViews);
-    expect(h).not.toBe(await promptHash(base));
+    const h = await contentHash(withViews);
+    expect(h).not.toBe(await contentHash(base));
     const moved = { ...withViews, regions: [{ id: "r", name: "rack", box: [0.1, 0.1, 0.5, 0.4] as [number, number, number, number] }] };
-    expect(await promptHash(moved)).not.toBe(h);
+    expect(await contentHash(moved)).not.toBe(h);
     // a region's name is sent in the automatic caption of a view without its own caption, so renaming it counts
-    expect(await promptHash({ ...withViews, regions: [{ ...withViews.regions![0], name: "tube rack" }] })).not.toBe(h);
+    expect(await contentHash({ ...withViews, regions: [{ ...withViews.regions![0], name: "tube rack" }] })).not.toBe(h);
     const reordered = { ...withViews, views: [views[1], views[0]] };
-    expect(await promptHash(reordered)).not.toBe(h);
+    expect(await contentHash(reordered)).not.toBe(h);
     expect(promptViews(withViews)).toHaveLength(2);
   });
   it("hashes only caption text that is sent", async () => {
@@ -67,9 +67,9 @@ describe("image views in the request", () => {
     const renamed = { ...single, regions: [{ ...single.regions![0], name: "tube rack" }] };
     // one untitled view: no caption is sent, so renaming its region changes nothing
     expect(buildState(renamed, [["E"]], ["T"])).toEqual(buildState(single, [["E"]], ["T"]));
-    expect(await promptHash(renamed)).toBe(await promptHash(single));
+    expect(await contentHash(renamed)).toBe(await contentHash(single));
     // with a caption of its own, the caption is sent and hashed
     const captioned = { ...single, views: [{ ...views![1], caption: "Close-up." }] };
-    expect(await promptHash(captioned)).not.toBe(await promptHash(single));
+    expect(await contentHash(captioned)).not.toBe(await contentHash(single));
   });
 });

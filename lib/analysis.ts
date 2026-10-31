@@ -18,7 +18,7 @@ import {
   type View,
 } from "./metrics";
 import { pairedRows, pickBaselines, preferredRun } from "./compare";
-import { useStore, type Role } from "./store";
+import { activeModel, useStore, type Role } from "./store";
 import type { ClassMapping, Dataset, Inference, Prompt, Run } from "./types";
 
 /** A prompt version: the prompt hash and the model it was scored with. */
@@ -230,7 +230,7 @@ export function useExperiment(): {
       inferences: st.inferences,
       promptHashes: st.promptHashes,
       selection: st.selection,
-      model: st.settings.model,
+      model: activeModel(st),
       mappings: st.mappings,
       focus: st.focus,
       thresholds: st.thresholds,

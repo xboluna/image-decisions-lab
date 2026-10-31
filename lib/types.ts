@@ -57,6 +57,11 @@ export type Prompt = {
   examples: PromptExample[];
   /** Longest image side, in pixels, of every JPEG sent to the model (examples and the evaluated image). */
   imageMaxSide: number;
+  /**
+   * The decision model the prompt is sent to; part of the prompt version. Missing only on prompts saved or exported
+   * before prompts carried their model: loading gives those the default model.
+   */
+  model?: string;
   /** Named areas of the image (normalized coordinates) that operations can refer to. */
   regions?: Region[];
   /** The images sent for each image under evaluation, in order. Missing or empty: the whole image, once. */
@@ -67,10 +72,11 @@ export type ContentPart = { type: "text"; text: string } | { type: "image_url"; 
 
 export type Usage = { inputTokens: number; outputTokens: number; costUsd: number };
 
-/** One model answer for one image, cached by (prompt hash, model, image hash). */
+/** One model answer for one image, cached by (prompt content hash, model, image hash). */
 export type Inference = {
   cacheKey: string;
   imageHash: string;
+  /** The prompt's content hash (contentHash in lib/prompt.ts: the prompt without its model). */
   promptHash: string;
   model: string;
   ok: boolean;
@@ -94,7 +100,10 @@ export type Run = {
   datasetHash: string;
   datasetName: string;
   promptId: string;
+  /** The prompt version scored: its content and model (promptHash in lib/prompt.ts). */
   promptHash: string;
+  /** The prompt without its model (contentHash); with the model, it keys the run's cached answers. */
+  contentHash: string;
   promptName: string;
   model: string;
   targetKey: string;
@@ -115,6 +124,7 @@ export type ClassMapping = Record<string, string | null>;
 
 export type Settings = {
   apiKey: string;
+  /** The model new prompts start with; each prompt carries its own. */
   model: string;
   concurrency: number;
   /** Show AUROC, cross-validated and macro balanced accuracy under the core metrics. */

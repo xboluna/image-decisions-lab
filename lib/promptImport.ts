@@ -10,6 +10,8 @@ type PromptFile = {
   name?: string;
   hash?: string;
   restore?: Prompt;
+  /** The decision model; files exported before prompts carried their model have none. */
+  model?: string | null;
   system_prompt?: string;
   target?: { key: string; type: "boolean" | "categorical" };
   question?: { instructions: string; criteria: Record<string, string> };
@@ -28,7 +30,10 @@ export async function importPromptZip(file: Blob, existingNames: string[]): Prom
   return importPromptFiles(files, existingNames);
 }
 
-/** Reads prompt.json and its reference images from a set of files (a prompt zip, a folder, or part of a bundle). */
+/**
+ * Reads prompt.json and its reference images from a set of files (a prompt zip, a folder, or part of a bundle). The
+ * prompt has no model when the file names none; the caller picks one (adding a prompt gives it the default model).
+ */
 export async function importPromptFiles(files: FileEntry[], existingNames: string[], jsonPath?: string): Promise<{ prompt: Prompt; warnings: string[] }> {
   const json = jsonPath ? files.find((f) => f.path === jsonPath) : files.filter((f) => f.path === "prompt.json" || f.path.endsWith("/prompt.json")).sort((x, y) => x.path.length - y.path.length)[0];
   if (!json) throw new Error("No prompt.json found.");
@@ -67,6 +72,7 @@ export async function importPromptFiles(files: FileEntry[], existingNames: strin
   };
   let name = (r?.name ?? data.name ?? "Imported prompt").trim();
   if (existingNames.includes(name)) name = `${name} (imported)`;
+  const model = (r?.model ?? data.model ?? "").trim();
   const now = new Date().toISOString();
   const prompt: Prompt = {
     id: uid("pr"),
@@ -79,6 +85,7 @@ export async function importPromptFiles(files: FileEntry[], existingNames: strin
     instructions: base.instructions,
     criteria: base.criteria,
     imageMaxSide: base.imageMaxSide ?? 1024,
+    ...(model ? { model } : {}),
     regions: r?.regions ?? data.regions ?? [],
     views: r?.views ?? data.views ?? [],
     examples,

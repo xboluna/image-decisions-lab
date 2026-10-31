@@ -53,13 +53,14 @@ async function encodeView(hash: string, view: ImageView, prompt: Prompt, cache: 
 }
 
 /**
- * Runs the prompt over every item, reusing cached answers for the same (prompt hash, model, image). Failed answers
+ * Runs the prompt over every item, reusing cached answers for the same (prompt content hash, model, image). Failed answers
  * are retried on the next run. onResult fires per item so the UI fills in as answers arrive.
  */
 export async function runInference(opts: {
   dataset: Dataset;
   prompt: Prompt;
-  promptHash: string;
+  /** The prompt's content hash, which keys cached answers with the model. */
+  contentHash: string;
   model: string;
   apiKey: string;
   concurrency: number;
@@ -67,7 +68,7 @@ export async function runInference(opts: {
   onResult: (itemId: string, inference: Inference, cached: boolean) => void;
   onProgress: (p: RunProgress) => void;
 }): Promise<RunProgress> {
-  const { dataset, prompt, promptHash, model } = opts;
+  const { dataset, prompt, contentHash: promptHash, model } = opts;
   const schema = dataset.schema.find((s) => s.key === prompt.targetKey) as LabelSchema;
   const classes = schema.type === "categorical" ? schema.classes : ["true", "false"];
   const question = buildQuestion(prompt);
