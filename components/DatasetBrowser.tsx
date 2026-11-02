@@ -153,7 +153,7 @@ export function DatasetBrowser({ dataset, analysis, target, targetKey, mapping, 
     const order = s.type === "boolean" ? ["true", "false"] : s.classes;
     return [...order, ...[...counts.keys()].filter((k) => !order.includes(k))]
       .filter((v) => counts.has(v))
-      .map((v) => ({ value: v, count: counts.get(v), color: s.key === targetKey && target ? classColor(target, mapping, target.type === "categorical" ? (mapping[v] === undefined ? v : (mapping[v] ?? undefined)) : v) : undefined }));
+      .map((v) => ({ value: v, count: counts.get(v), color: s.key === targetKey && target ? classColor(target, mapping, target.type !== "boolean" ? (mapping[v] === undefined ? v : (mapping[v] ?? undefined)) : v) : undefined }));
   };
 
   const active: { key: string; label: string; clear: () => void }[] = [];
@@ -223,7 +223,7 @@ export function DatasetBrowser({ dataset, analysis, target, targetKey, mapping, 
               <FilterGroup title="Predicted class" disabled={!hasRun} hint={noRunHint}>
                 <MultiChips
                   disabled={!hasRun}
-                  options={(analysis?.groups ?? (target?.type === "categorical" ? target.classes : ["true", "false"])).map((g) => ({ value: g, count: predCounts.get(g) ?? 0, color: classColor(target, mapping, g) }))}
+                  options={(analysis?.groups ?? (target && target.type !== "boolean" ? target.classes : ["true", "false"])).map((g) => ({ value: g, count: predCounts.get(g) ?? 0, color: classColor(target, mapping, g) }))}
                   selected={filters.predicted}
                   onChange={(v) => setFilters({ predicted: v })}
                   render={(v) => classLabel(target, v)}
@@ -379,7 +379,7 @@ function ColorLegend({ colorBy, target, mapping, analysis }: { colorBy: ColorBy;
     const keys: Outcome[] = analysis?.view.mode === "binary" ? ["TP", "TN", "FP", "FN"] : ["correct", "incorrect"];
     entries = keys.map((k) => ({ color: OUTCOME_META[k].color, label: OUTCOME_META[k].long }));
   } else {
-    const groups = analysis?.groups ?? (target.type === "categorical" ? target.classes : ["true", "false"]);
+    const groups = analysis?.groups ?? (target.type !== "boolean" ? target.classes : ["true", "false"]);
     entries = groups.map((g) => ({ color: classColor(target, mapping, g), label: classLabel(target, g) }));
   }
   return (

@@ -5,8 +5,8 @@ import { db } from "./db";
 import { sha256Bytes, shortHash } from "./hash";
 import { manifestJsonl } from "./manifest";
 import { pairedRows } from "./compare";
-import { ALL, computeAdvanced } from "./metrics";
-import { buildQuestion, buildState, contentHash, exampleViews, IMAGE_PIPELINE, JPEG_QUALITY, promptViews, questionId, STATE_TEMPLATE_VERSION } from "./prompt";
+import { ALL, computeAdvanced, expectedBucket } from "./metrics";
+import { buildQuestion, buildState, contentHash, countBuckets, exampleViews, IMAGE_PIPELINE, JPEG_QUALITY, promptViews, questionId, STATE_TEMPLATE_VERSION } from "./prompt";
 import { modelJpeg } from "./runner";
 import type { ClassMapping, Dataset, Prompt } from "./types";
 
@@ -98,7 +98,8 @@ function promptRecord(prompt: Prompt, hash: string, content: string) {
     system_prompt: prompt.systemPrompt,
     target: { key: prompt.targetKey, type: prompt.targetType },
     question_id: questionId(prompt),
-    question: buildQuestion(prompt),
+    // A count question lists bucket descriptions in order; `buckets` names them, as answers refer to them by position.
+    question: { ...buildQuestion(prompt), ...(prompt.targetType === "count" ? { buckets: countBuckets(prompt) } : {}) },
     examples: prompt.examples.map((e, i) => ({ file: examplePath(i, e.fileName), source_file: e.fileName, sha256: e.imageHash, label: e.label, caption: e.caption, ...(e.ops?.length ? { ops: e.ops } : {}) })),
     // Image operations, in the order they run; areas are fractions of the original image (x0, y0, x1, y1).
     regions: prompt.regions ?? [],
@@ -158,6 +159,7 @@ function predictions(a: Analysis, prompt: Prompt) {
       outcome: row?.outcome ?? null,
       low_confidence: row?.lowConfidence ?? false,
       probabilities: row?.probs ?? null,
+      ...(a.target.type === "count" ? { expected_bucket: row?.probs && Object.keys(row.probs).length ? expectedBucket(row.probs, a.groups) : null } : {}),
       raw_probabilities: inf?.probabilities ?? null,
       raw_answer: inf?.raw ?? null,
       error: inf?.error ?? null,
@@ -270,6 +272,16 @@ function metricsRecord(a: Analysis, threshold: ThresholdInfo, mapping: ClassMapp
     view: a.view.mode === "binary" ? { mode: "binary", positive_class: a.view.positive } : { mode: "multiclass" },
     threshold: { value: threshold.value, fitted_on_training_set: threshold.fitted, source: threshold.source, meaning: a.view.mode === "binary" ? "score >= threshold is called positive" : "answers below this top-class probability are flagged for review" },
     metrics: a.metrics,
+    ...(a.metrics.count
+      ? {
+          count_notes: {
+            buckets: a.groups,
+            exact: "the most likely bucket is the true one",
+            within_one: "the most likely bucket is at most one position from the true one",
+            mae: "mean of |true position - expected position|, expected = sum of position x probability",
+          },
+        }
+      : {}),
     ...(advanced ? { advanced_metrics: advancedRecord(a, mapping) } : {}),
     comparison: comparisonRecord(a, mapping, advanced),
     confusion_matrix: { rows_are: "actual", columns_are: "predicted", labels: a.confusion.labels, cells: a.confusion.cells },
@@ -322,6 +334,7 @@ export async function exportExperiment(opts: {
       stale: a.stale,
       accuracy: a.metrics.accuracy,
       balanced_accuracy: a.metrics.balancedAccuracy,
+      ...(a.metrics.count ? { exact: a.metrics.count.exact, within_one: a.metrics.count.withinOne, mean_absolute_error: a.metrics.count.mae } : {}),
       n: a.metrics.n,
       ...(m.advanced_metrics
         ? { auroc: m.advanced_metrics.auroc, cross_validated_balanced_accuracy: m.advanced_metrics.cross_validated_balanced_accuracy, macro_balanced_accuracy: m.advanced_metrics.macro_balanced_accuracy }

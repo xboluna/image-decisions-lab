@@ -12,7 +12,14 @@ export const JPEG_QUALITY = 85;
  */
 export const IMAGE_PIPELINE = "pillow-thumbnail-bicubic/libjpeg-turbo-q85-420";
 
-export type DecisionQuestion = { type: "noul" | "choice"; instructions: string; criteria: Record<string, string> };
+/**
+ * A Decisions API question. noul: yes/no, answered with P(yes). choice: one of several keyed options, answered with a
+ * probability per key. score: ordered buckets given as a list, answered with a probability per bucket position
+ * ("0", "1", …) and the expected position as `score`.
+ */
+export type DecisionQuestion =
+  | { type: "noul" | "choice"; instructions: string; criteria: Record<string, string> }
+  | { type: "score"; instructions: string; criteria: string[] };
 
 /** The decision question id: the label key, reduced to the characters the API accepts. */
 export function questionId(prompt: Pick<Prompt, "targetKey">): string {
@@ -23,7 +30,15 @@ export function buildQuestion(prompt: Prompt): DecisionQuestion {
   if (prompt.targetType === "boolean") {
     return { type: "noul", instructions: prompt.instructions, criteria: { true: prompt.criteria.true ?? "Yes.", false: prompt.criteria.false ?? "No." } };
   }
+  if (prompt.targetType === "count") {
+    return { type: "score", instructions: prompt.instructions, criteria: countBuckets(prompt).map((b) => prompt.criteria[b] ?? b) };
+  }
   return { type: "choice", instructions: prompt.instructions, criteria: { ...prompt.criteria } };
+}
+
+/** A count prompt's buckets, lowest first. */
+export function countBuckets(prompt: Pick<Prompt, "buckets" | "criteria">): string[] {
+  return prompt.buckets?.length ? prompt.buckets : Object.keys(prompt.criteria);
 }
 
 export function exampleText(prompt: Prompt, example: PromptExample, index: number): string {
@@ -98,6 +113,8 @@ export function contentHash(prompt: Prompt): Promise<string> {
     targetKey: prompt.targetKey,
     questionId: questionId(prompt),
     question: buildQuestion(prompt),
+    // The question lists bucket descriptions only; the names answers map back to are part of the version too.
+    ...(prompt.targetType === "count" ? { buckets: countBuckets(prompt) } : {}),
     examples: prompt.examples.map((e, i) => ({ image: e.imageHash, text: exampleText(prompt, e, i), ...(views && e.ops?.length ? { ops: e.ops } : {}) })),
     // Only prompts that use views hash them, so every earlier prompt keeps its hash and cached answers.
     ...(views
@@ -142,7 +159,7 @@ export function inferenceKey(content: string, model: string, imageHash: string):
 }
 
 /** Default question text for a label, used when a prompt is pointed at a new target. */
-export function defaultQuestion(schema: LabelSchema): Pick<Prompt, "targetKey" | "targetType" | "instructions" | "criteria"> {
+export function defaultQuestion(schema: LabelSchema): Pick<Prompt, "targetKey" | "targetType" | "instructions" | "criteria" | "buckets"> {
   const words = schema.key.replace(/[_-]+/g, " ").trim();
   if (schema.type === "boolean") {
     return {
@@ -150,6 +167,15 @@ export function defaultQuestion(schema: LabelSchema): Pick<Prompt, "targetKey" |
       targetType: "boolean",
       instructions: schema.description || `In this image, is it true that: ${words}?`,
       criteria: { true: `Yes: ${words}.`, false: `No: not ${words}.` },
+    };
+  }
+  if (schema.type === "count") {
+    return {
+      targetKey: schema.key,
+      targetType: "count",
+      instructions: schema.description || `How many ${words} are in this image?`,
+      criteria: Object.fromEntries(schema.classes.map((c) => [c, `${c}.`])),
+      buckets: [...schema.classes],
     };
   }
   return {
@@ -169,7 +195,10 @@ export function promptProblems(prompt: Prompt, schema: LabelSchema[] | undefined
   const s = schema.find((x) => x.key === prompt.targetKey);
   if (!s) return [...problems, `The dataset has no "${prompt.targetKey}" label.`];
   if (s.type !== prompt.targetType) problems.push(`"${prompt.targetKey}" is ${s.type} in the dataset but the prompt treats it as ${prompt.targetType}.`);
-  if (s.type === "categorical") {
+  if (s.type === "count" && prompt.targetType === "count" && countBuckets(prompt).join("\n") !== s.classes.join("\n")) {
+    problems.push(`The question's buckets (${countBuckets(prompt).join(", ")}) are not the dataset's, in order (${s.classes.join(", ")}).`);
+  }
+  if (s.type !== "boolean") {
     const missing = s.classes.filter((c) => !(c in prompt.criteria));
     const extra = Object.keys(prompt.criteria).filter((c) => !s.classes.includes(c));
     if (missing.length) problems.push(`The question has no option for ${missing.map((c) => `"${c}"`).join(", ")}.`);

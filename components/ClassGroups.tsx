@@ -13,7 +13,7 @@ const EXCLUDE = "__exclude__";
  * Merge, exclude or keep each class. Scoring only: merged classes add their probabilities, excluded classes drop
  * their images and renormalise the rest. The model is asked the same question, so no new run is needed.
  */
-export function ClassGroups({ target, mapping }: { target: Extract<Target, { type: "categorical" }>; mapping: ClassMapping }) {
+export function ClassGroups({ target, mapping }: { target: Exclude<Target, { type: "boolean" }>; mapping: ClassMapping }) {
   const prompt = useStore((s) => s.prompts.find((p) => p.id === s.selection.prompt));
   const setMapping = useStore((s) => s.setMapping);
   const [newGroup, setNewGroup] = useState("");
@@ -33,6 +33,7 @@ export function ClassGroups({ target, mapping }: { target: Extract<Target, { typ
       <div className="text-[13px] font-semibold">Class groups</div>
       <p className="mt-0.5 text-[11.5px] leading-snug text-ink-2">
         Merge classes to see if a coarser label scores better, or exclude a class. Scoring only: probabilities are summed per group, so no new model calls are made. Applies to both sets.
+        {target.type === "count" && " Groups keep bucket order (a group sits where its lowest bucket was), so merge neighbouring buckets, e.g. 3 and 4+ into 3+."}
       </p>
       <div className="mt-2.5 space-y-1.5">
         {target.classes.map((c) => {

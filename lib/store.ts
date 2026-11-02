@@ -301,7 +301,7 @@ export const useStore = create<State>((set, get) => {
       const train = get().datasets.find((d) => d.id === get().selection.train);
       const truth = new Map(train?.items.map((i) => [i.imageHash, i.labels[schema.key]]) ?? []);
       const fallback = schema.type === "boolean" ? true : schema.classes[0];
-      patchPrompt(id, (p) => ({ ...p, ...defaultQuestion(schema), examples: p.examples.map((e) => ({ ...e, label: truth.get(e.imageHash) ?? fallback })) }));
+      patchPrompt(id, (p) => ({ ...p, buckets: undefined, ...defaultQuestion(schema), examples: p.examples.map((e) => ({ ...e, label: truth.get(e.imageHash) ?? fallback })) }));
       set({ focus: ALL });
     },
     addExample(example) {

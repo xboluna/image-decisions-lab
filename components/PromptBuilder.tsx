@@ -9,7 +9,7 @@ import { exportPrompt } from "@/lib/export";
 import { sha256Bytes } from "@/lib/hash";
 import { imageSize, resizeJpeg } from "@/lib/image";
 import { modelInfo } from "@/lib/models";
-import { imagesPerRequest, promptProblems, promptViews } from "@/lib/prompt";
+import { countBuckets, imagesPerRequest, promptProblems, promptViews } from "@/lib/prompt";
 import { importPromptZip } from "@/lib/promptImport";
 import { activeModel, useStore } from "@/lib/store";
 import type { Dataset, LabelSchema, Prompt, PromptExample } from "@/lib/types";
@@ -155,8 +155,8 @@ function ExampleRow({ example, index, prompt, schema }: { example: PromptExample
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: example.id });
   const updateExample = useStore((s) => s.updateExample);
   const removeExample = useStore((s) => s.removeExample);
-  const target = schema ? (schema.type === "boolean" ? ({ type: "boolean" } as const) : ({ type: "categorical", classes: schema.classes } as const)) : null;
-  const badLabel = schema?.type === "categorical" && !schema.classes.includes(String(example.label));
+  const target = schema ? (schema.type === "boolean" ? ({ type: "boolean" } as const) : ({ type: schema.type, classes: schema.classes } as const)) : null;
+  const badLabel = !!schema && schema.type !== "boolean" && !schema.classes.includes(String(example.label));
   const [editing, setEditing] = useState(false);
   const edited = !!example.ops?.length;
   return (
@@ -224,7 +224,7 @@ function ExampleRow({ example, index, prompt, schema }: { example: PromptExample
                 className={cx("h-6.5 rounded-md border bg-surface px-1.5 text-[12px] font-medium outline-none focus:border-accent", badLabel ? "border-critical text-critical-ink" : "border-line-strong")}
               >
                 {badLabel && <option value={String(example.label)}>{String(example.label)} (not in dataset)</option>}
-                {(schema?.type === "categorical" ? schema.classes : []).map((c) => (
+                {(schema && schema.type !== "boolean" ? schema.classes : []).map((c) => (
                   <option key={c} value={c}>
                     {c}
                   </option>
@@ -255,7 +255,7 @@ function ExamplePicker({ open, onClose, dataset, prompt }: { open: boolean; onCl
   const addExample = useStore((s) => s.addExample);
   const [filter, setFilter] = useState<string>("all");
   const schema = dataset?.schema.find((s) => s.key === prompt.targetKey);
-  const target = schema ? (schema.type === "boolean" ? ({ type: "boolean" } as const) : ({ type: "categorical", classes: schema.classes } as const)) : null;
+  const target = schema ? (schema.type === "boolean" ? ({ type: "boolean" } as const) : ({ type: schema.type, classes: schema.classes } as const)) : null;
   const values = schema ? (schema.type === "boolean" ? ["true", "false"] : schema.classes) : [];
   const items = (dataset?.items ?? []).filter((i) => filter === "all" || String(i.labels[prompt.targetKey]) === filter);
   const used = new Set(prompt.examples.map((e) => e.imageHash));
@@ -447,11 +447,11 @@ export function PromptBuilder() {
         continue;
       }
       if (!(await db.hasImage(imageHash))) await db.putImage(imageHash, blob, (await resizeJpeg(blob, 384, 0.8)).blob);
-      addExample({ imageHash, fileName: file.name, caption: "", label: prompt!.targetType === "boolean" ? true : (schema?.type === "categorical" ? schema.classes[0] : "") });
+      addExample({ imageHash, fileName: file.name, caption: "", label: prompt!.targetType === "boolean" ? true : (schema && schema.type !== "boolean" ? schema.classes[0] : "") });
     }
   }
 
-  const criteriaKeys = prompt.targetType === "boolean" ? ["true", "false"] : schema?.type === "categorical" ? schema.classes : Object.keys(prompt.criteria);
+  const criteriaKeys = prompt.targetType === "boolean" ? ["true", "false"] : prompt.targetType === "count" ? countBuckets(prompt) : schema && schema.type !== "boolean" ? schema.classes : Object.keys(prompt.criteria);
   const imageCount = imagesPerRequest(prompt);
 
   return (
@@ -508,19 +508,19 @@ export function PromptBuilder() {
               {!train?.schema.some((s) => s.key === prompt.targetKey) && <option value={prompt.targetKey}>{prompt.targetKey || "Choose a label"}</option>}
               {train?.schema.map((s) => (
                 <option key={s.key} value={s.key}>
-                  {s.key} ({s.type === "boolean" ? "yes/no" : `${s.classes.length} classes`})
+                  {s.key} ({s.type === "boolean" ? "yes/no" : s.type === "count" ? `count, ${s.classes.length} buckets` : `${s.classes.length} classes`})
                 </option>
               ))}
             </select>
           </div>
-          <Field className="mt-2.5" label="Question" hint={prompt.targetType === "boolean" ? "Answered as P(yes)" : "Answered as P(class)"}>
+          <Field className="mt-2.5" label="Question" hint={prompt.targetType === "boolean" ? "Answered as P(yes)" : prompt.targetType === "count" ? "Answered as P(bucket); buckets listed lowest first" : "Answered as P(class)"}>
             <textarea value={prompt.instructions} onChange={(e) => updatePrompt(prompt.id, { instructions: e.target.value })} rows={2} className={cx(inputClass, "resize-y leading-relaxed [field-sizing:content]")} aria-label="Question" />
           </Field>
           <div className="mt-2 space-y-1.5">
             {criteriaKeys.map((k) => (
               <div key={k} className="flex items-start gap-2">
                 <span className="mt-1.5 inline-flex w-[88px] shrink-0 items-center gap-1.5 text-[12px] font-medium">
-                  <span className="size-2.5 shrink-0 rounded-[3px]" style={{ background: classColor(schema ? (schema.type === "boolean" ? { type: "boolean" } : { type: "categorical", classes: schema.classes }) : null, {}, k) }} />
+                  <span className="size-2.5 shrink-0 rounded-[3px]" style={{ background: classColor(schema ? (schema.type === "boolean" ? { type: "boolean" } : { type: schema.type, classes: schema.classes }) : null, {}, k) }} />
                   <span className="truncate">{prompt.targetType === "boolean" ? (k === "true" ? "Yes means" : "No means") : k}</span>
                 </span>
                 <textarea

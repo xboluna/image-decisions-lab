@@ -4,7 +4,7 @@ import { sha256Bytes, uid } from "./hash";
 import { imageSize, mimeFor, resizeJpeg } from "./image";
 import { expandZips, type FileEntry } from "./importer";
 import type { ImageOp, ImageView, Region } from "./ops";
-import type { Prompt, PromptExample } from "./types";
+import type { Prompt, PromptExample, TargetType } from "./types";
 
 type PromptFile = {
   name?: string;
@@ -13,8 +13,9 @@ type PromptFile = {
   /** The decision model; files exported before prompts carried their model have none. */
   model?: string | null;
   system_prompt?: string;
-  target?: { key: string; type: "boolean" | "categorical" };
-  question?: { instructions: string; criteria: Record<string, string> };
+  target?: { key: string; type: TargetType };
+  /** buckets: count questions only, lowest first; their criteria may be the question's list, in bucket order. */
+  question?: { instructions: string; criteria: Record<string, string> | string[]; buckets?: string[] };
   image?: { max_side?: number };
   examples?: { file: string; source_file?: string; sha256: string; label: boolean | string; caption: string; ops?: ImageOp[] }[];
   regions?: Region[];
@@ -22,6 +23,14 @@ type PromptFile = {
 };
 
 /** Reads a prompt zip made by "Download prompt": prompt.json plus its reference images. Returns a new prompt. */
+/** A question's criteria as one description per class; a count question's list is matched to its buckets by position. */
+function criteriaRecord(question: PromptFile["question"]): Record<string, string> {
+  const c = question?.criteria;
+  if (!Array.isArray(c)) return c ?? {};
+  const buckets = question?.buckets ?? c.map((_, i) => String(i));
+  return Object.fromEntries(buckets.map((b, i) => [b, c[i] ?? b]));
+}
+
 export async function importPromptZip(file: Blob, existingNames: string[]): Promise<{ prompt: Prompt; warnings: string[] }> {
   const files = await expandZips([{ path: "prompt.zip", file }]);
   if (!files.some((f) => f.path === "prompt.json" || f.path.endsWith("/prompt.json"))) {
@@ -67,7 +76,8 @@ export async function importPromptFiles(files: FileEntry[], existingNames: strin
     targetKey: data.target?.key ?? "",
     targetType: data.target?.type ?? "boolean",
     instructions: data.question?.instructions ?? "",
-    criteria: data.question?.criteria ?? {},
+    criteria: criteriaRecord(data.question),
+    buckets: data.question?.buckets,
     imageMaxSide: data.image?.max_side ?? 1024,
   };
   let name = (r?.name ?? data.name ?? "Imported prompt").trim();
@@ -84,6 +94,7 @@ export async function importPromptFiles(files: FileEntry[], existingNames: strin
     targetType: base.targetType,
     instructions: base.instructions,
     criteria: base.criteria,
+    ...(base.targetType === "count" && base.buckets?.length ? { buckets: [...base.buckets] } : {}),
     imageMaxSide: base.imageMaxSide ?? 1024,
     ...(model ? { model } : {}),
     regions: r?.regions ?? data.regions ?? [],

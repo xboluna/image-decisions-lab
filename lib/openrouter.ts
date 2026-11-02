@@ -1,5 +1,5 @@
 import type { DecisionQuestion } from "./prompt";
-import type { ContentPart, Usage } from "./types";
+import type { ContentPart, TargetType, Usage } from "./types";
 
 export const DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions";
 export const KEY_URL = "https://openrouter.ai/api/v1/key";
@@ -93,14 +93,21 @@ export async function decide(opts: {
   return last;
 }
 
-/** Class probabilities from a Decisions API answer. Boolean questions give P(yes) as "noul". */
-export function answerProbabilities(answer: Record<string, unknown>, targetType: "boolean" | "categorical", classes: string[]): Record<string, number> | null {
+/**
+ * Class probabilities from a Decisions API answer. Boolean questions give P(yes) as "noul". Count (score) questions
+ * key their probabilities by bucket position ("0", "1", …), in the order the question listed the buckets.
+ */
+export function answerProbabilities(answer: Record<string, unknown>, targetType: TargetType, classes: string[]): Record<string, number> | null {
   if (targetType === "boolean") {
     const p = answer.noul;
     if (typeof p !== "number" || !Number.isFinite(p)) return null;
     return { true: p, false: 1 - p };
   }
   const probs = answer.probabilities as Record<string, unknown> | undefined;
+  if (targetType === "count") {
+    if (!probs || typeof probs !== "object") return null;
+    return Object.fromEntries(classes.map((c, i) => [c, typeof probs[String(i)] === "number" ? (probs[String(i)] as number) : 0]));
+  }
   if (!probs || typeof probs !== "object") {
     return typeof answer.choice === "string" ? Object.fromEntries(classes.map((c) => [c, c === answer.choice ? 1 : 0])) : null;
   }
