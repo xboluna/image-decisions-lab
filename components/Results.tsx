@@ -3,7 +3,7 @@ import { Layers, RotateCcw } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { Analysis, ThresholdInfo } from "@/lib/analysis";
 import { pairedRows } from "@/lib/compare";
-import { ALL, computeAdvanced, groupsFor, type Target } from "@/lib/metrics";
+import { ALL, computeAdvanced, groupsFor, type Metrics, type Target } from "@/lib/metrics";
 import { useStore } from "@/lib/store";
 import type { ClassMapping } from "@/lib/types";
 import { ChartCard, ConfusionChart, Histogram, LegendKey, PrChart } from "./charts";
@@ -19,7 +19,10 @@ export type ChartFilters = {
   cell: { actual: string; predicted: string } | null;
 };
 
-function Tile({ label, value, sub, delta, hero, title }: { label: string; value: string; sub?: string; delta?: number | null; hero?: boolean; title?: string }) {
+/** delta: a share (shown in points) unless `buckets`, a distance where lower is better (mean absolute error). */
+function Tile({ label, value, sub, delta, hero, title, buckets }: { label: string; value: string; sub?: string; delta?: number | null; hero?: boolean; title?: string; buckets?: boolean }) {
+  const better = delta != null && (buckets ? delta < 0 : delta > 0);
+  const flat = delta == null || Math.abs(delta) < (buckets ? 0.005 : 0.0005);
   return (
     <div className={cx("min-w-0 rounded-xl border border-line px-3 py-2.5", hero ? "bg-accent-wash/60" : "bg-surface-2")}>
       <div className="flex min-w-0 items-center gap-1 text-[11.5px] font-medium text-ink-2">
@@ -29,8 +32,8 @@ function Tile({ label, value, sub, delta, hero, title }: { label: string; value:
       <div className="mt-0.5 flex items-baseline gap-1.5">
         <span className={cx("font-semibold tracking-tight text-ink", hero ? "text-[24px]" : "text-[20px]")}>{value}</span>
         {delta != null && Number.isFinite(delta) && (
-          <span className={cx("text-[11px] font-medium tabular", Math.abs(delta) < 0.0005 ? "text-muted" : delta > 0 ? "text-good-ink" : "text-critical-ink")} title="Change versus the version compared against">
-            {delta > 0 ? "▲" : delta < 0 ? "▼" : ""} {Math.abs(delta * 100).toFixed(1)} pts
+          <span className={cx("text-[11px] font-medium tabular", flat ? "text-muted" : better ? "text-good-ink" : "text-critical-ink")} title="Change versus the version compared against">
+            {delta > 0 ? "▲" : delta < 0 ? "▼" : ""} {buckets ? `${Math.abs(delta).toFixed(2)} buckets` : `${Math.abs(delta * 100).toFixed(1)} pts`}
           </span>
         )}
       </div>
@@ -109,24 +112,55 @@ function CoreTiles({ a, mapping }: { a: Analysis; mapping: ClassMapping }) {
       </div>
     );
   }
+  if (m.count) {
+    const near = (x: Metrics | undefined) => x?.count?.withinOne;
+    const mae = (x: Metrics | undefined) => x?.count?.mae;
+    const change = (f: (x: Metrics | undefined) => number | null | undefined) => {
+      const after = f(b?.after);
+      const before = f(b?.before);
+      return after != null && before != null ? after - before : null;
+    };
+    return (
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5" data-count-metrics>
+        <Tile hero label="Exact match" value={fmtPct(m.count.exact)} delta={d("accuracy")} sub={scoredSub} title="The share of images whose most likely bucket is the true one (accuracy over buckets)." />
+        <Tile label="Within one" value={fmtPct(m.count.withinOne)} delta={change(near)} sub="at most one bucket off" title="The share of images whose most likely bucket is the true one or a neighbour: the count is right or one off." />
+        <Tile
+          buckets
+          label="Mean absolute error"
+          value={m.count.mae == null ? "—" : m.count.mae.toFixed(2)}
+          delta={change(mae)}
+          sub="buckets, lower is better"
+          title="The mean distance, in buckets, from the true bucket to the expected bucket (each bucket's position weighted by its probability), so a hedged answer is partly wrong even when its top bucket is right."
+        />
+        <Tile label="Balanced accuracy" value={fmtPct(m.balancedAccuracy)} delta={d("balancedAccuracy")} sub="mean recall per bucket" title={BA_HELP} />
+        <PerClassRecall a={a} mapping={mapping} noun="bucket" />
+      </div>
+    );
+  }
   return (
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
       <Tile hero label="Balanced accuracy" value={fmtPct(m.balancedAccuracy)} delta={d("balancedAccuracy")} sub={scoredSub} title={BA_HELP} />
       <Tile label="Accuracy" value={fmtPct(m.accuracy)} delta={d("accuracy")} sub={`${m.perClass.reduce((s, p) => s + p.tp, 0)} of ${m.n} right`} title="The share of scored images whose most likely class matches the label. Can look good on unbalanced data just by guessing the common class." />
       <Tile label="Above review cutoff" value={fmtPct(m.coverage)} delta={d("coverage")} sub="share of answers kept" title="The share of answers whose top-class probability is at or above the review cutoff (the line on the histogram). Answers below it are flagged for review." />
       <Tile label="Accuracy above cutoff" value={fmtPct(m.accuracyAboveCutoff)} delta={d("accuracyAboveCutoff")} sub="on kept answers" title="Accuracy on only the answers at or above the review cutoff: how right the model is when it is confident enough to trust without review." />
-      <div className="col-span-2 min-w-0 rounded-xl border border-line bg-surface-2 px-3 py-2 sm:col-span-1">
-        <div className="text-[11.5px] font-medium text-ink-2">Recall per class</div>
-        <div className="mt-1 space-y-1">
-          {m.perClass.map((p) => (
-            <div key={p.name} className="flex items-center gap-1.5 text-[11.5px]">
-              <span className="size-2 shrink-0 rounded-[3px]" style={{ background: classColor(a.target, mapping, p.name) }} />
-              <span className="min-w-0 flex-1 truncate text-ink-2">{p.name}</span>
-              <span className="tabular text-ink">{fmtPct(p.recall, 0)}</span>
-              <span className="w-8 text-right tabular text-muted">n={p.support}</span>
-            </div>
-          ))}
-        </div>
+      <PerClassRecall a={a} mapping={mapping} noun="class" />
+    </div>
+  );
+}
+
+function PerClassRecall({ a, mapping, noun }: { a: Analysis; mapping: ClassMapping; noun: string }) {
+  return (
+    <div className="col-span-2 min-w-0 rounded-xl border border-line bg-surface-2 px-3 py-2 sm:col-span-1">
+      <div className="text-[11.5px] font-medium text-ink-2">Recall per {noun}</div>
+      <div className="mt-1 space-y-1">
+        {a.metrics.perClass.map((p) => (
+          <div key={p.name} className="flex items-center gap-1.5 text-[11.5px]">
+            <span className="size-2 shrink-0 rounded-[3px]" style={{ background: classColor(a.target, mapping, p.name) }} />
+            <span className="min-w-0 flex-1 truncate text-ink-2">{p.name}</span>
+            <span className="tabular text-ink">{fmtPct(p.recall, 0)}</span>
+            <span className="w-8 text-right tabular text-muted">n={p.support}</span>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -141,7 +175,7 @@ export function ViewControls({ role, target, mapping, focus, threshold, a }: { r
   const binary = a.view.mode === "binary";
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-      {target.type === "categorical" && (
+      {target.type !== "boolean" && (
         <div className="flex items-center gap-1.5">
           <span className="text-[12px] text-muted">View</span>
           <select
@@ -150,7 +184,7 @@ export function ViewControls({ role, target, mapping, focus, threshold, a }: { r
             onChange={(e) => setFocus(e.target.value)}
             className="h-7 rounded-lg border border-line-strong bg-surface px-2 text-[12.5px] font-medium text-ink outline-none focus:border-accent"
           >
-            <option value={ALL}>All classes (argmax)</option>
+            <option value={ALL}>{target.type === "count" ? "All buckets (most likely)" : "All classes (argmax)"}</option>
             {groups.map((g) => (
               <option key={g} value={g}>
                 One vs rest: {g}
@@ -159,7 +193,7 @@ export function ViewControls({ role, target, mapping, focus, threshold, a }: { r
           </select>
         </div>
       )}
-      {target.type === "categorical" && (
+      {target.type !== "boolean" && (
         <div className="relative">
           {role === "train" ? (
             <Button size="sm" icon={<Layers className="size-3.5" />} onClick={() => setGroupsOpen((o) => !o)} aria-expanded={groupsOpen}>

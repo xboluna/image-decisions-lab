@@ -12,6 +12,10 @@ import type { DatasetItem, LabelSchema, LabelValue } from "./types";
  *
  * metadata.csv with a file_name column is accepted too. JSON booleans (or true/false, yes/no, 0/1 in CSV) make a
  * boolean label; strings make a categorical label. Every other column is ignored.
+ *
+ * A count label is declared in dataset.json, never inferred: {"key": "tubes", "type": "count", "classes": ["0", "1",
+ * "2", "3", "4+"]} lists the buckets lowest first. A value is a bucket name, or a whole number, which goes in the bucket
+ * at that position, with anything past the last bucket in the last (so 7 is "4+").
  */
 export const MANIFEST_NAMES = ["metadata.jsonl", "metadata.csv"] as const;
 export const SIDECAR_NAME = "dataset.json";
@@ -139,6 +143,19 @@ export function inferSchema(rows: ManifestRow[], sidecar?: Sidecar): { schema: L
       continue;
     }
     const decl = declared.get(key);
+    // before the boolean test: a count column of 0s and 1s is still a count
+    if (decl?.type === "count") {
+      const classes = (decl.classes ?? []).map(String);
+      if (classes.length < 2) {
+        warnings.push(`Count "${key}" declares fewer than two buckets and was ignored.`);
+        continue;
+      }
+      const count = { key, type: "count" as const, classes, description: decl.description };
+      const unknown = present.filter((v) => coerceLabel(count, v) == null).length;
+      if (unknown) warnings.push(`${unknown} value${unknown === 1 ? "" : "s"} of count "${key}" fit no bucket and were left unlabeled.`);
+      schema.push(count);
+      continue;
+    }
     const allBool = present.every(
       (v) => typeof v === "boolean" || (typeof v === "string" && (TRUE_WORDS.has(v.trim().toLowerCase()) || FALSE_WORDS.has(v.trim().toLowerCase()))) || v === 0 || v === 1,
     );
@@ -180,7 +197,9 @@ export function coerceLabel(schema: LabelSchema, raw: unknown): LabelValue {
     return null;
   }
   const value = String(raw).trim();
-  return schema.classes.includes(value) ? value : null;
+  if (schema.classes.includes(value)) return value;
+  if (schema.type === "count" && /^\d+$/.test(value)) return schema.classes[Math.min(Number(value), schema.classes.length - 1)];
+  return null;
 }
 
 /** The dataset version. Covers the label schema, every image's bytes (by hash) and every label; never the name. */
@@ -229,6 +248,10 @@ export function compareSchemas(a: LabelSchema[], b: LabelSchema[]): SchemaDiff[]
         const parts = [onlyA.length ? `only in one: ${onlyA.join(", ")}` : "", onlyB.length ? `only in the other: ${onlyB.join(", ")}` : ""].filter(Boolean);
         diffs.push({ key: s.key, problem: `classes differ (${parts.join("; ")})` });
       }
+    }
+    // buckets are positions, so the same names in another order are a different count
+    if (s.type === "count" && other.type === "count" && s.classes.join("\n") !== other.classes.join("\n")) {
+      diffs.push({ key: s.key, problem: `buckets differ (${s.classes.join(", ")} vs ${other.classes.join(", ")})` });
     }
   }
   for (const s of b) if (!aMap.has(s.key)) diffs.push({ key: s.key, problem: `missing from the other dataset` });

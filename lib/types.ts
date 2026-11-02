@@ -1,9 +1,15 @@
 import type { ImageOp, ImageView, Region } from "./ops";
 
-/** A label column in a dataset. Boolean labels are yes/no; categorical labels pick one of several classes. */
+/**
+ * A label column in a dataset. Boolean labels are yes/no; categorical labels pick one of several classes; count
+ * labels pick one of several ordered buckets (e.g. 0, 1, 2, 3, 4+), so being one bucket off counts as nearly right.
+ */
 export type LabelSchema =
   | { key: string; type: "boolean"; description?: string }
-  | { key: string; type: "categorical"; classes: string[]; description?: string };
+  | { key: string; type: "categorical"; classes: string[]; description?: string }
+  | { key: string; type: "count"; classes: string[]; description?: string };
+
+export type TargetType = LabelSchema["type"];
 
 export type LabelValue = boolean | string | null;
 
@@ -50,10 +56,12 @@ export type Prompt = {
   systemPrompt: string;
   /** The dataset label this harness classifies. */
   targetKey: string;
-  targetType: "boolean" | "categorical";
+  targetType: TargetType;
   instructions: string;
-  /** boolean: { true, false }. categorical: one description per class. */
+  /** boolean: { true, false }. categorical and count: one description per class or bucket. */
   criteria: Record<string, string>;
+  /** Count prompts: the buckets in order, lowest first. The question lists them in this order and answers name them by position. */
+  buckets?: string[];
   examples: PromptExample[];
   /** Longest image side, in pixels, of every JPEG sent to the model (examples and the evaluated image). */
   imageMaxSide: number;

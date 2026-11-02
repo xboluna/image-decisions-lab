@@ -100,7 +100,7 @@ export function Header() {
     return "current";
   };
   const promptState: StepState = live.train || live.test ? "running" : roleState("train") === "stale" || roleState("test") === "stale" ? "stale" : "current";
-  const multiclass = exp.target?.type === "categorical" && exp.focus === ALL;
+  const multiclass = !!exp.target && exp.target.type !== "boolean" && exp.focus === ALL;
 
   return (
     <header className="sticky top-0 z-30 border-b border-line bg-page/85 backdrop-blur-md">

@@ -5,7 +5,7 @@ import { modelInfo } from "./models";
 import { answerProbabilities, decide } from "./openrouter";
 import type { Decoded } from "./decodeImage";
 import type { ImageView } from "./ops";
-import { buildQuestion, buildState, exampleViews, imagesPerRequest, inferenceKey, JPEG_QUALITY, promptViews, questionId } from "./prompt";
+import { buildQuestion, buildState, countBuckets, exampleViews, imagesPerRequest, inferenceKey, JPEG_QUALITY, promptViews, questionId } from "./prompt";
 import type { Dataset, Inference, LabelSchema, Prompt } from "./types";
 
 export type RunProgress = { done: number; total: number; cached: number; errors: number; costUsd: number };
@@ -70,7 +70,8 @@ export async function runInference(opts: {
 }): Promise<RunProgress> {
   const { dataset, prompt, contentHash: promptHash, model } = opts;
   const schema = dataset.schema.find((s) => s.key === prompt.targetKey) as LabelSchema;
-  const classes = schema.type === "categorical" ? schema.classes : ["true", "false"];
+  // a count answer names buckets by position in the question, so map them back in the question's order
+  const classes = prompt.targetType === "count" ? countBuckets(prompt) : schema.type === "boolean" ? ["true", "false"] : schema.classes;
   const question = buildQuestion(prompt);
   const qid = questionId(prompt);
   const progress: RunProgress = { done: 0, total: dataset.items.length, cached: 0, errors: 0, costUsd: 0 };

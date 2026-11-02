@@ -106,7 +106,7 @@ export function pickRun(
 export function targetFor(dataset: Dataset, prompt: Prompt): Target | null {
   const s = dataset.schema.find((x) => x.key === prompt.targetKey);
   if (!s || s.type !== prompt.targetType) return null;
-  return s.type === "boolean" ? { type: "boolean" } : { type: "categorical", classes: s.classes };
+  return s.type === "boolean" ? { type: "boolean" } : { type: s.type, classes: s.classes };
 }
 
 function inputsFor(dataset: Dataset, run: Run, inferences: Record<string, Inference>, key: string): { inputs: ScoreInput[]; byId: Map<string, Inference> } {
@@ -250,7 +250,7 @@ export function useExperiment(): {
     const testDs = s.datasets.find((d) => d.id === s.selection.test);
     const mapping = (prompt && s.mappings[prompt.targetKey]) || {};
     const target = prompt && (trainDs ?? testDs) ? targetFor((trainDs ?? testDs) as Dataset, prompt) : null;
-    const focus = target && target.type === "categorical" && (s.focus === ALL || groupsFor(target, mapping).includes(s.focus)) ? s.focus : ALL;
+    const focus = target && target.type !== "boolean" && (s.focus === ALL || groupsFor(target, mapping).includes(s.focus)) ? s.focus : ALL;
     const view = target ? viewFor(target, focus) : null;
     const defaultT = view?.mode === "multiclass" ? 0 : 0.5;
     let threshold: ThresholdInfo = { value: defaultT, fitted: null, overridden: false, source: "default", trainRunId: null };

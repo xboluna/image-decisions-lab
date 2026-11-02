@@ -110,7 +110,7 @@ function LabelSummary({ dataset, targetKey }: { dataset: Dataset; targetKey?: st
             className={cx("inline-flex h-6 items-center gap-1.5 rounded-md border px-2 text-[11.5px]", s.key === targetKey ? "border-accent/40 bg-accent-wash text-accent-ink" : "border-line bg-surface-2 text-ink-2")}
           >
             <span className="font-medium">{s.key}</span>
-            <span className="opacity-70">{s.type === "boolean" ? "yes/no" : `${s.classes.length} classes`}</span>
+            <span className="opacity-70">{s.type === "boolean" ? "yes/no" : s.type === "count" ? `count · ${s.classes.length} buckets` : `${s.classes.length} classes`}</span>
           </span>
         );
       })}
@@ -137,7 +137,7 @@ function RunHistory({ dataset, role }: { dataset: Dataset; role: Role }) {
     return mine.map((r) => {
       const target = dataset.schema.find((s) => s.key === r.targetKey);
       if (!target) return { r, ba: null as number | null };
-      const t = target.type === "boolean" ? ({ type: "boolean" } as const) : ({ type: "categorical", classes: target.classes } as const);
+      const t = target.type === "boolean" ? ({ type: "boolean" } as const) : ({ type: target.type, classes: target.classes } as const);
       const mapping = mappings[r.targetKey] ?? {};
       const view = viewFor(t, ALL);
       const inputs = dataset.items.map((i) => {

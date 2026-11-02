@@ -12,7 +12,7 @@ local storage. Model calls go straight from the browser to `openrouter.ai`. Ther
 1. **Datasets.** Upload a folder or zip in the Hugging Face ImageFolder layout (below). Each dataset gets a
    content hash over its images, labels and label schema.
 2. **Prompt.** Write the system prompt, pick the label to classify, phrase the question and its criteria, and add
-   reference images (positive/negative for yes/no labels, a class for class labels).
+   reference images (positive/negative for yes/no labels, a class for class labels, a bucket for count labels).
    **Image views** (bottom of the prompt) decide what the model sees of each image: draw regions on a sample
    training image, then build one or more views from operations applied in order: **crop** (with a margin of
    context), **outline** (a frame drawn just outside an area), **spotlight** (darken everything else) and
@@ -102,6 +102,21 @@ my-dataset/
 
 JSON booleans (or true/false, yes/no, 0/1 in `metadata.csv`) make a yes/no label; strings make a class label.
 `dataset.json` fixes the class order and declares classes a subset may not contain.
+
+**Count labels** are declared in `dataset.json`, never inferred: `{"key": "tubes", "type": "count", "classes": ["0",
+"1", "2", "3", "4+"]}` lists ordered buckets, lowest first. A value is a bucket name or a whole number, which lands
+in the bucket at that position (anything past the last goes in the last, so `7` is `4+`).
+
+- **Question.** A count prompt is asked as a Decisions API `score` question: the bucket descriptions as an ordered
+  list. Each answer gives a probability per bucket position, and its expected position (Σ position × probability)
+  as `score`. The bucket names and their order are part of the prompt version, and `prompt.json` lists them under
+  `question.buckets`.
+- **Metrics.** Results add three count metrics, with buckets as positions after any merges:
+  - exact match: the most likely bucket is the true one; ties go to the lower bucket;
+  - within one: it is at most one bucket off;
+  - mean absolute error: the mean distance from the true position to the expected position.
+- **Everything else.** Balanced accuracy, one-vs-rest views, PR curves and the ordered confusion matrix work as for
+  class labels. Merge neighbouring buckets (e.g. 3 and 4+ into 3+) to score a coarser count.
 
 ## Demo data
 

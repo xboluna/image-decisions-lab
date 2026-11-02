@@ -22,7 +22,8 @@ export type ScoreInput = {
   error?: string;
 };
 
-export type Target = { type: "boolean" } | { type: "categorical"; classes: string[] };
+/** count: categorical over ordered buckets, scored as categorical plus how far off each answer is (CountMetrics). */
+export type Target = { type: "boolean" } | { type: "categorical" | "count"; classes: string[] };
 
 export type Row = {
   id: string;
@@ -138,8 +139,17 @@ export type Metrics = {
   /** Multiclass view: answers at or above the review cutoff. */
   coverage?: number | null;
   accuracyAboveCutoff?: number | null;
+  /** Count targets, all-buckets view. */
+  count?: CountMetrics;
   perClass: ClassStats[];
 };
+
+/**
+ * How close count answers are, with buckets as positions 0, 1, 2… (after merges, in bucket order). exact: the most
+ * likely bucket is the true one (accuracy). withinOne: it is at most one bucket off. mae: the mean distance from the
+ * true bucket to the expected bucket, Σ position × probability, so a hedged answer is partly wrong.
+ */
+export type CountMetrics = { exact: number | null; withinOne: number | null; mae: number | null };
 
 const ratio = (a: number, b: number) => (b > 0 ? a / b : null);
 
@@ -171,14 +181,33 @@ export function computeMetrics(rows: Row[], target: Target, mapping: ClassMappin
   }
   const recalls = perClass.filter((p) => p.support > 0).map((p) => p.recall as number);
   const confident = scored.filter((r) => !r.lowConfidence);
+  const accuracy = ratio(scored.filter((r) => r.outcome === "correct").length, scored.length);
   return {
     ...base,
-    accuracy: ratio(scored.filter((r) => r.outcome === "correct").length, scored.length),
+    accuracy,
     balancedAccuracy: recalls.length ? recalls.reduce((s, x) => s + x, 0) / recalls.length : null,
     coverage: ratio(confident.length, scored.length),
     accuracyAboveCutoff: ratio(confident.filter((r) => r.outcome === "correct").length, confident.length),
+    ...(target.type === "count" ? { count: countMetrics(scored, groups, accuracy) } : {}),
     perClass,
   };
+}
+
+export function countMetrics(scored: Row[], groups: string[], exact: number | null): CountMetrics {
+  const pos = new Map(groups.map((g, i) => [g, i]));
+  let near = 0;
+  let distance = 0;
+  for (const r of scored) {
+    const t = pos.get(r.gt as string) as number;
+    if (Math.abs(t - (pos.get(r.pred as string) as number)) <= 1) near++;
+    distance += Math.abs(t - expectedBucket(r.probs, groups));
+  }
+  return { exact, withinOne: ratio(near, scored.length), mae: scored.length ? distance / scored.length : null };
+}
+
+/** Σ position × probability over the buckets (probabilities are already normalized over the included buckets). */
+export function expectedBucket(probs: Record<string, number>, groups: string[]): number {
+  return groups.reduce((s, g, i) => s + i * (probs[g] ?? 0), 0);
 }
 
 /** Rows: actual class. Columns: predicted class. Binary views use [positive, negative]. */
